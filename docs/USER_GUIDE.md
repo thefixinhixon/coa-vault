@@ -27,6 +27,11 @@ Filters help if there are many results: narrow by Store, Type, or Status.
 File it only once — update the existing entry (Edit) to add another store
 instead of creating a second copy.
 
+**Bulk attach:** in the **Account** section, **Attach PDFs to entries
+missing files** matches each selected PDF to a catalog entry by exact file
+name — and when several entries were filed from one shared bundle PDF under
+the same file name, that one upload attaches to every one of those entries.
+
 ## Publishing in bulk — "Publish all Drafts" (filers / admins)
 
 Normally every COA is published one at a time, after someone has visually

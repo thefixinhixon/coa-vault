@@ -344,15 +344,22 @@ $('attachInput') && $('attachInput').addEventListener('change', async ()=>{
   if(!window.__CLOUD || !canFile()){ showMsg('Bulk attach is a cloud feature for filers/admins.','err'); return; }
   let done=0, skipped=[];
   for(const f of files){
-    // strict matching only: exact original fileName, else skip rather than guess
-    const match=catalog.find(x=>x.fileName===f.name);
-    if(!match){ skipped.push(f.name); continue; }
-    try{
-      const path='coas/'+match.id+'.pdf';
-      await fbStore.ref().child(path).put(f);
-      await fbDb.collection('coas').doc(match.id).update({storagePath:path,fileName:f.name,updatedBy:currentUser.email});
-      done++;
-    }catch(err){ skipped.push(f.name+' ('+err.message+')'); }
+    // strict matching only: exact original fileName, else skip rather than guess.
+    // A shared bundle PDF is filed under the same fileName on several entries,
+    // so link the upload to EVERY matching entry that still lacks a file.
+    const matches=catalog.filter(x=>x.fileName===f.name && !x.storagePath);
+    if(!matches.length){ skipped.push(f.name); continue; }
+    let linked=0, firstErr=null;
+    for(const m of matches){
+      try{
+        const path='coas/'+m.id+'.pdf';
+        await fbStore.ref().child(path).put(f);
+        await fbDb.collection('coas').doc(m.id).update({storagePath:path,fileName:f.name,updatedBy:currentUser.email});
+        linked++;
+      }catch(err){ if(!firstErr) firstErr=err; }
+    }
+    if(linked) done++;
+    if(firstErr) skipped.push(f.name+' ('+firstErr.message+')');
   }
   $('attachInput').value='';
   showMsg('Attached '+done+' PDF(s) to their catalog entries.'+(skipped.length?' Skipped (no entry with a matching file name, or upload error): '+esc(skipped.join(', ')):''), skipped.length?'warn':'info');
