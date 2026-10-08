@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>COA Vault — The Greenery Room</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{--green:#1d4d2b;--green2:#2e7d44;--bg:#f4f6f3;--card:#fff;--line:#d9e2d9;--mut:#667;--red:#b42318;--amber:#b54708;--amberbg:#fffaeb;--redbg:#fef3f2;--ok:#027a48;--okbg:#ecfdf3}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:#172}
+header{background:var(--green);color:#fff;padding:18px 20px}header h1{margin:0;font-size:24px}header p{margin:4px 0 0;opacity:.9;font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}.stat b{font-size:28px;display:block}.stat span{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.card h2{margin:0 0 6px;font-size:19px}.hint{color:var(--mut);font-size:13px;margin:0 0 12px}
+.drop{border:2px dashed #9db89d;border-radius:12px;padding:26px;text-align:center;background:#f7fbf7;cursor:pointer}.drop.drag{background:#e8f5e9;border-color:var(--green2)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+label{font-size:13px;font-weight:600;display:block;margin-bottom:4px}input,select,textarea{width:100%;padding:9px 10px;border:1px solid #cbd5cb;border-radius:8px;font:inherit;background:#fff}textarea{resize:vertical}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.row>*{flex:1;min-width:150px}
+.btn{background:var(--green);color:#fff;border:0;padding:10px 16px;border-radius:9px;cursor:pointer;font-weight:650}.btn:hover{background:var(--green2)}.btn.sec{background:#fff;color:var(--green);border:1px solid var(--green)}.btn.sm{padding:6px 10px;font-size:13px}.btn.danger{background:#fff;color:var(--red);border:1px solid var(--red)}
+.checks{display:flex;gap:14px;flex-wrap:wrap}.checks label{display:flex;gap:6px;align-items:center;font-weight:500}.checks input{width:auto}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}.ok{background:var(--okbg);color:var(--ok)}.warn{background:var(--amberbg);color:var(--amber)}.bad{background:var(--redbg);color:var(--red)}.grey{background:#eef2ee;color:#445}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:var(--mut)}
+.banner{padding:11px 13px;border-radius:10px;margin-bottom:12px;font-size:14px}.banner.warn{background:var(--amberbg);color:#7a2e0e;border:1px solid #fedf89}.banner.info{background:#eff8ff;color:#175cd3;border:1px solid #b2ddff}.banner.err{background:var(--redbg);color:var(--red);border:1px solid #fecdca}
+.hidden{display:none!important}.queueItem{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px;background:#fbfcfb;font-size:14px}
+dialog{border:0;border-radius:14px;max-width:860px;width:94%;padding:0}dialog .inner{padding:20px}dialog::backdrop{background:rgba(0,0,0,.5)}
+footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
+.kbd{background:#eee;border-radius:4px;padding:1px 5px;font-size:12px}
+</style>
+</head>
+<body>
+<header><h1>🌿 COA Vault</h1><p>The Greenery Room — Certificates of Analysis for Ruidoso · Alto · Carrizozo &nbsp;|&nbsp; v1 Prototype</p></header>
+<div class="wrap">
+
+<div id="msg"></div>
+
+<section class="stats">
+  <div class="stat"><b id="stTotal">0</b><span>Total COAs filed</span></div>
+  <div class="stat"><b id="stValid">0</b><span>Valid</span></div>
+  <div class="stat"><b id="stSoon">0</b><span>Expiring ≤ 30 days</span></div>
+  <div class="stat"><b id="stExpired">0</b><span>Expired</span></div>
+  <div class="stat"><b id="stStores">3</b><span>Stores covered</span></div>
+</section>
+
+<section class="card">
+  <h2>1. Upload COA PDFs</h2>
+  <p class="hint">Drag &amp; drop one or many PDFs, or click to browse. The app reads the PDF text and pre-fills the form below — always check it before saving. PDFs are stored in this browser (IndexedDB) in v1 local mode.</p>
+  <div class="drop" id="drop" tabindex="0">📄 Drop COA PDFs here, or click to select files<input type="file" id="fileInput" accept="application/pdf,.pdf" multiple class="hidden"></div>
+  <div id="queue"></div>
+</section>
+
+<section class="card">
+  <h2>2. Catalog details</h2>
+  <p class="hint">Batch / Lot # + Product Name are the lookup keys. A duplicate warning appears if that pair is already filed.</p>
+  <div id="dupWarn" class="banner warn hidden"></div>
+  <form id="coaForm">
+    <input type="hidden" id="f_id">
+    <div class="grid">
+      <div><label>Product Name *</label><input id="f_productName" required placeholder="e.g. Blue Dream Flower 3.5g"></div>
+      <div><label>Brand / Vendor</label><input id="f_brand" placeholder="e.g. Wana, Cheeba Chews, Drool"></div>
+      <div><label>Strain</label><input id="f_strain"></div>
+      <div><label>Product Type</label><select id="f_productType"><option>Flower</option><option>Edible</option><option>Vape</option><option>Concentrate</option><option>Pre-Roll</option><option>Tincture</option><option>Topical</option><option>Other</option></select></div>
+      <div><label>Batch / Lot # *</label><input id="f_batchLot" required></div>
+      <div><label>NMS2S Barcode</label><input id="f_barcode" placeholder="Barcode from inventory / label"></div>
+      <div><label>Lab Name</label><input id="f_lab"></div>
+      <div><label>Sample ID</label><input id="f_sampleId"></div>
+      <div><label>Test Date</label><input type="date" id="f_testDate"></div>
+      <div><label>Expiration Date</label><input type="date" id="f_expirationDate"></div>
+      <div><label>Total THC %</label><input id="f_totalThcPercent" inputmode="decimal" placeholder="21.40"></div>
+      <div><label>Total CBD %</label><input id="f_totalCbdPercent" inputmode="decimal" placeholder="0.08"></div>
+      <div><label>Pesticides</label><select id="f_pesticides"><option></option><option>Pass</option><option>Fail</option><option>Not Tested</option></select></div>
+      <div><label>Heavy Metals</label><select id="f_heavyMetals"><option></option><option>Pass</option><option>Fail</option><option>Not Tested</option></select></div>
+      <div><label>Microbials</label><select id="f_microbials"><option></option><option>Pass</option><option>Fail</option><option>Not Tested</option></select></div>
+      <div><label>Uploaded By</label><input id="f_uploadedBy" placeholder="Your name"></div>
+    </div>
+    <div style="margin-top:12px"><label>Store(s) that received this product</label>
+      <div class="checks">
+        <label><input type="checkbox" class="storeBox" value="Ruidoso" checked> Ruidoso</label>
+        <label><input type="checkbox" class="storeBox" value="Alto"> Alto</label>
+        <label><input type="checkbox" class="storeBox" value="Carrizozo"> Carrizozo</label>
+      </div>
+    </div>
+    <div style="margin-top:10px"><label>Notes</label><textarea id="f_notes" rows="2" placeholder="Delivery date, invoice #, anything useful"></textarea></div>
+    <div style="margin-top:8px;font-size:13px;color:var(--mut)">Attached file: <span id="f_fileName">— none —</span></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" type="submit">Save COA to Vault</button>
+      <button class="btn sec" type="button" id="clearForm">Clear form</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>3. Find a COA</h2>
+  <p class="hint">Search product, batch, brand, strain, lab, sample ID, or barcode. This is the screen to use when an inspector or customer asks for a COA.</p>
+  <div class="row">
+    <div style="flex:2"><label>Search</label><input id="q" placeholder="e.g. Blue Dream, BD-240901, SAMPLE001234"></div>
+    <div><label>Store</label><select id="qStore"><option value="">All stores</option><option>Ruidoso</option><option>Alto</option><option>Carrizozo</option></select></div>
+    <div><label>Type</label><select id="qType"><option value="">All types</option><option>Flower</option><option>Edible</option><option>Vape</option><option>Concentrate</option><option>Pre-Roll</option><option>Tincture</option><option>Topical</option><option>Other</option></select></div>
+    <div><label>Status</label><select id="qStatus"><option value="">Any status</option><option value="valid">Valid</option><option value="soon">Expiring ≤30d</option><option value="expired">Expired</option><option value="fail">Any Fail</option></select></div>
+  </div>
+  <div style="overflow:auto;margin-top:14px"><table>
+    <thead><tr><th>Product</th><th>Batch / Lot</th><th>THC</th><th>Expires</th><th>Status</th><th>Tests</th><th>Stores</th><th></th></tr></thead>
+    <tbody id="results"></tbody>
+  </table></div>
+  <p class="hint" id="resultCount"></p>
+</section>
+
+<section class="card">
+  <h2>4. Missing-COA check (from NMS2S inventory)</h2>
+  <p class="hint">Upload the same NMS2S Current Inventory CSV the Label Generator uses. The app compares barcodes and product names against the vault and lists in-stock items with no COA on file. A demo file is in <span class="kbd">data/sample-inventory.csv</span>.</p>
+  <div class="row"><div><label>Inventory CSV</label><input type="file" id="invInput" accept=".csv,text/csv"></div><button class="btn sec" id="runMissing" type="button">Run check</button></div>
+  <div id="missingOut" style="margin-top:12px"></div>
+</section>
+
+<section class="card">
+  <h2>5. Share / backup</h2>
+  <p class="hint">Export the catalog to publish it as the shared vault (<span class="kbd">data/catalog.json</span>) or as a backup / spreadsheet. Import loads a catalog JSON on this PC. PDFs filed locally stay in this browser in v1 — see README for the shared-PDF publishing step.</p>
+  <div class="row">
+    <button class="btn sec" id="expJson" type="button">Export catalog JSON</button>
+    <button class="btn sec" id="expCsv" type="button">Export catalog CSV</button>
+    <div><label>Import catalog JSON</label><input type="file" id="impInput" accept=".json,application/json"></div>
+    <button class="btn danger" id="clearSamples" type="button">Remove SAMPLE entries</button>
+  </div>
+</section>
+
+</div>
+<footer>COA Vault v1 Prototype · The Greenery Room · Data in this browser + shared catalog at data/catalog.json · Always verify the PDF itself is the official COA before producing it.</footer>
+
+<dialog id="viewDlg"><div class="inner"><div class="row" style="justify-content:space-between"><h3 id="vTitle" style="margin:0">COA</h3><button class="btn sec sm" onclick="document.getElementById('viewDlg').close()">Close</button></div><div id="vBody" style="margin-top:12px"></div></div></dialog>
+
+<script>
+// ---------- Utilities ----------
+const $=id=>document.getElementById(id);
+const norm=s=>(s||'').toString().trim().toLowerCase().replace(/\s+/g,' ');
+const esc=s=>(s||'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function todayISO(){return new Date().toISOString().slice(0,10)}
+function daysUntil(dateStr){if(!dateStr)return null;const d=new Date(dateStr+'T12:00:00');const n=new Date();n.setHours(12,0,0,0);return Math.round((d-n)/86400000)}
+function statusOf(e){const d=daysUntil(e.expirationDate);if(d===null)return{key:'valid',label:'No expiry date',cls:'grey'};if(d<0)return{key:'expired',label:'Expired '+Math.abs(d)+'d ago',cls:'bad'};if(d<=30)return{key:'soon',label:'Expires in '+d+'d',cls:'warn'};return{key:'valid',label:'Valid',cls:'ok'}}
+function showMsg(html,cls='info'){ $('msg').innerHTML='<div class="banner '+cls+'">'+html+'</div>'; window.scrollTo({top:0,behavior:'smooth'}) }
+function download(name,text,type='application/json'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+
+// ---------- IndexedDB for PDF blobs ----------
+let dbPromise=null;
+function idb(){if(dbPromise)return dbPromise;dbPromise=new Promise((res,rej)=>{const r=indexedDB.open('coa-vault-db',1);r.onupgradeneeded=()=>{r.result.createObjectStore('files')};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});return dbPromise}
+async function idbPut(key,blob){const db=await idb();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').put(blob,key);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
+async function idbGet(key){const db=await idb();return new Promise((res,rej)=>{const rq=db.transaction('files').objectStore('files').get(key);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>rej(rq.error)})}
+async function idbDel(key){const db=await idb();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').delete(key);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
+
+// ---------- Catalog state ----------
+const LS_KEY='coa-vault-catalog-v1';
+let catalog=[]; let pendingFile=null; let pendingFileName=''; let queue=[];
+try{catalog=JSON.parse(localStorage.getItem(LS_KEY)||'[]')}catch(e){catalog=[]}
+function saveCatalog(){localStorage.setItem(LS_KEY,JSON.stringify(catalog));render()}
+function uid(){return 'coa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8)}
+
+async function loadShared(){
+  try{
+    const r=await fetch('data/catalog.json',{cache:'no-store'});
+    if(!r.ok)return;
+    const data=await r.json(); const entries=data.entries||data;
+    if(!Array.isArray(entries))return;
+    let added=0;
+    for(const e of entries){ if(!catalog.some(x=>x.id===e.id || (norm(x.batchLot)===norm(e.batchLot)&&norm(x.productName)===norm(e.productName)))){catalog.push(e);added++} }
+    if(added){localStorage.setItem(LS_KEY,JSON.stringify(catalog)); showMsg(added+' shared / sample COA(s) loaded from data/catalog.json. They are marked SAMPLE until you remove them.','info')}
+  }catch(e){/* file:// or no shared catalog - local mode only */}
+}
+
+// ---------- PDF auto-extract ----------
+if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' }
+async function extractPdfText(file){
+  if(!window.pdfjsLib) throw new Error('pdf.js not loaded (needs internet for the CDN on first use)');
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let text='';
+  for(let i=1;i<=pdf.numPages;i++){const page=await pdf.getPage(i);const tc=await page.getTextContent();text+=tc.items.map(x=>x.str).join(' ')+'\n'}
+  return text;
+}
+function parseCOAText(text,filename){
+  const t=' '+text.replace(/\s+/g,' ')+' '; const out={};
+  const grab=(re)=>{const m=t.match(re);return m?(m[1]||'').trim():''};
+  out.batchLot=grab(/(?:Batch|Lot)(?:\s*(?:No\.?|Number|#|ID))?\s*[:#]?\s*([A-Za-z0-9\-_.\/]{3,40})/i);
+  out.sampleId=grab(/(?:Sample\s*(?:ID|#|No\.?))\s*[:#]?\s*([A-Za-z0-9\-_.\/]{3,40})/i);
+  out.barcode=grab(/(?:Barcode|Bar\s*Code|SKU)\s*[:#]?\s*([A-Za-z0-9\-]{4,30})/i);
+  out.totalThcPercent=grab(/Total\s*THC[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)\s*%/i) || grab(/\bTHC\b[^0-9%]{0,15}([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  out.totalCbdPercent=grab(/Total\s*CBD[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)\s*%/i) || grab(/\bCBD\b[^0-9%]{0,15}([0-9]+(?:\.[0-9]+)?)\s*%/i);
+  const dateGrab=(labelRe)=>{const m=t.match(labelRe);if(!m)return'';const raw=m[1];const d=new Date(raw);return isNaN(d)?'':d.toISOString().slice(0,10)};
+  out.testDate=dateGrab(/(?:Test(?:ed)?\s*Date|Date\s*Tested|Analysis\s*Date)\s*[:#]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+  out.expirationDate=dateGrab(/(?:Expir(?:ation|es?)\s*(?:Date)?)\s*[:#]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+  out.lab=grab(/((?:[A-Z][A-Za-z& ]+)(?:Laborator(?:y|ies)|Analytics|Testing|Labs?))\b/);
+  const passFor=(name)=>{const re=new RegExp(name+'[^A-Za-z]{0,30}(Pass|Fail)','i');const m=t.match(re);return m?(m[1][0].toUpperCase()+m[1].slice(1).toLowerCase()):''};
+  out.pesticides=passFor('Pesticide'); out.heavyMetals=passFor('Heavy\\s*Metal'); out.microbials=passFor('Microbial');
+  // strain: common phrasing "Strain: X"
+  out.strain=grab(/(?:Strain|Cultivar)\s*[:#]?\s*([A-Za-z][A-Za-z0-9 ]{1,35})/i);
+  // product guess from filename if nothing better
+  out._filenameGuess=filename.replace(/\.pdf$/i,'').replace(/[_-]+/g,' ').trim();
+  return out;
+}
+function fillForm(p,onlyEmpty=true){
+  const map={productName:'f_productName',brand:'f_brand',strain:'f_strain',batchLot:'f_batchLot',barcode:'f_barcode',lab:'f_lab',sampleId:'f_sampleId',testDate:'f_testDate',expirationDate:'f_expirationDate',totalThcPercent:'f_totalThcPercent',totalCbdPercent:'f_totalCbdPercent',pesticides:'f_pesticides',heavyMetals:'f_heavyMetals',microbials:'f_microbials'};
+  for(const k in map){ if(p[k] && (!onlyEmpty || !$(map[k]).value)) $(map[k]).value=p[k] }
+  checkDup();
+}
+function checkDup(){
+  const b=norm($('f_batchLot').value), p=norm($('f_productName').value), id=$('f_id').value;
+  const dup=catalog.find(e=>e.id!==id && b && norm(e.batchLot)===b && norm(e.productName)===p);
+  const el=$('dupWarn');
+  if(dup){el.classList.remove('hidden');el.innerHTML='⚠️ <b>Possible duplicate:</b> this Batch + Product is already filed as “'+esc(dup.productName)+'” (Batch '+esc(dup.batchLot)+', filed '+(dup.uploadedAt||'—')+'). Saving again will create a second entry — check before you save.'}
+  else el.classList.add('hidden');
+  return dup;
+}
+['f_batchLot','f_productName'].forEach(id=>$(id).addEventListener('input',checkDup));
+
+// ---------- Upload queue ----------
+const drop=$('drop'), fileInput=$('fileInput');
+drop.addEventListener('click',()=>fileInput.click());
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('drag');handleFiles([...e.dataTransfer.files])});
+fileInput.addEventListener('change',()=>{handleFiles([...fileInput.files]);fileInput.value=''});
+async function handleFiles(files){
+  const pdfs=files.filter(f=>/pdf$/i.test(f.type)||/\.pdf$/i.test(f.name));
+  if(!pdfs.length){showMsg('No PDF files found in that selection.','err');return}
+  for(const f of pdfs){ queue.push(f); renderQueueItem(f,'Reading PDF text…');
+    try{ const text=await extractPdfText(f); const parsed=parseCOAText(text,f.name);
+      // stash parsed + file on the queue item via index
+      const idx=queue.indexOf(f); queue[idx]._parsed=parsed; queue[idx]._textLen=text.length;
+      renderQueueItem(f,'Extracted '+(text.length?text.length+' chars':'no text — scanned PDF? Enter details manually below')+'. Click “Use this file” then review the form.',parsed);
+    }catch(err){ renderQueueItem(f,'Could not auto-read this PDF ('+esc(err.message)+'). Click “Use this file” and enter details manually.') }
+  }
+  // auto-select the first file
+  if(pdfs.length===1) useFile(queue.indexOf(pdfs[0]));
+}
+function renderQueueItem(file,status,parsed){
+  const idx=queue.indexOf(file); let el=document.querySelector('[data-q="'+idx+'"]');
+  if(!el){el=document.createElement('div');el.className='queueItem';el.dataset.q=idx;$('queue').appendChild(el)}
+  el.innerHTML='<b>'+esc(file.name)+'</b> — '+esc(status)+(parsed&&parsed.batchLot?' · Batch guess: <b>'+esc(parsed.batchLot)+'</b>':'')+' &nbsp;<button type="button" class="btn sm sec" onclick="useFile('+idx+')">Use this file</button>';
+}
+window.useFile=async function(idx){
+  const f=queue[idx]; if(!f)return;
+  pendingFile=f; pendingFileName=f.name; $('f_fileName').textContent=f.name;
+  if(f._parsed) fillForm(f._parsed,false);
+  if(!$('f_productName').value && f._parsed && f._parsed._filenameGuess) $('f_productName').value=f._parsed._filenameGuess;
+  showMsg('File “'+esc(f.name)+'” attached to the form below. Review the auto-filled fields, fix anything wrong, then Save.','info');
+  $('coaForm').scrollIntoView({behavior:'smooth'});
+};
+
+// ---------- Save / edit / delete / view ----------
+$('coaForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const stores=[...document.querySelectorAll('.storeBox:checked')].map(x=>x.value);
+  const id=$('f_id').value||uid();
+  const entry={id,
+    productName:$('f_productName').value.trim(),brand:$('f_brand').value.trim(),strain:$('f_strain').value.trim(),
+    productType:$('f_productType').value,batchLot:$('f_batchLot').value.trim(),barcode:$('f_barcode').value.trim(),
+    lab:$('f_lab').value.trim(),sampleId:$('f_sampleId').value.trim(),testDate:$('f_testDate').value,expirationDate:$('f_expirationDate').value,
+    totalThcPercent:$('f_totalThcPercent').value.trim(),totalCbdPercent:$('f_totalCbdPercent').value.trim(),
+    pesticides:$('f_pesticides').value,heavyMetals:$('f_heavyMetals').value,microbials:$('f_microbials').value,
+    uploadedBy:$('f_uploadedBy').value.trim(),stores,notes:$('f_notes').value.trim(),
+    fileName:pendingFileName||($('f_fileName').textContent==='— none —'?'':$('f_fileName').textContent),
+    filePath:'',sample:false,uploadedAt:todayISO()};
+  if(pendingFile){ try{await idbPut(id,pendingFile)}catch(err){showMsg('Warning: catalog saved but the PDF could not be stored in this browser ('+esc(err.message)+')','warn')} }
+  const existingIdx=catalog.findIndex(x=>x.id===id);
+  if(existingIdx>=0){ entry.fileName=entry.fileName||catalog[existingIdx].fileName; entry.uploadedAt=catalog[existingIdx].uploadedAt||entry.uploadedAt; catalog[existingIdx]=entry } else catalog.unshift(entry);
+  pendingFile=null; pendingFileName='';
+  saveCatalog(); clearForm(true);
+  showMsg('✅ Saved “'+esc(entry.productName)+'” (Batch '+esc(entry.batchLot)+') to the vault.','info');
+});
+function clearForm(keepMsg){ $('coaForm').reset(); $('f_id').value=''; $('f_fileName').textContent='— none —'; $('dupWarn').classList.add('hidden'); document.querySelector('.storeBox[value="Ruidoso"]').checked=true; if(!keepMsg)render(); }
+$('clearForm').addEventListener('click',()=>clearForm());
+window.editEntry=function(id){const e=catalog.find(x=>x.id===id);if(!e)return;clearForm(true);
+  $('f_id').value=e.id;$('f_productName').value=e.productName||'';$('f_brand').value=e.brand||'';$('f_strain').value=e.strain||'';$('f_productType').value=e.productType||'Other';$('f_batchLot').value=e.batchLot||'';$('f_barcode').value=e.barcode||'';$('f_lab').value=e.lab||'';$('f_sampleId').value=e.sampleId||'';$('f_testDate').value=e.testDate||'';$('f_expirationDate').value=e.expirationDate||'';$('f_totalThcPercent').value=e.totalThcPercent||'';$('f_totalCbdPercent').value=e.totalCbdPercent||'';$('f_pesticides').value=e.pesticides||'';$('f_heavyMetals').value=e.heavyMetals||'';$('f_microbials').value=e.microbials||'';$('f_uploadedBy').value=e.uploadedBy||'';$('f_notes').value=e.notes||'';$('f_fileName').textContent=e.fileName||e.filePath||'— none —';
+  document.querySelectorAll('.storeBox').forEach(b=>b.checked=(e.stores||[]).includes(b.value));
+  window.scrollTo({top:$('coaForm').offsetTop-80,behavior:'smooth'});};
+window.delEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;if(!confirm('Delete “'+e.productName+'” (Batch '+e.batchLot+') from the vault on this PC?'))return;catalog=catalog.filter(x=>x.id!==id);try{await idbDel(id)}catch(_){} saveCatalog();};
+window.viewEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;$('vTitle').textContent=e.productName;
+  let html='<p><b>Batch/Lot:</b> '+esc(e.batchLot)+' &nbsp; <b>Brand:</b> '+esc(e.brand||'—')+' &nbsp; <b>Strain:</b> '+esc(e.strain||'—')+'<br><b>Lab:</b> '+esc(e.lab||'—')+' &nbsp; <b>Sample:</b> '+esc(e.sampleId||'—')+'<br><b>Test date:</b> '+esc(e.testDate||'—')+' &nbsp; <b>Expires:</b> '+esc(e.expirationDate||'—')+' ('+statusOf(e).label+')<br><b>THC:</b> '+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+' &nbsp; <b>CBD:</b> '+esc(e.totalCbdPercent?e.totalCbdPercent+'%':'—')+'<br><b>Pesticides:</b> '+esc(e.pesticides||'—')+' · <b>Heavy metals:</b> '+esc(e.heavyMetals||'—')+' · <b>Microbials:</b> '+esc(e.microbials||'—')+'<br><b>Stores:</b> '+esc((e.stores||[]).join(', '))+' &nbsp; <b>Barcode:</b> '+esc(e.barcode||'—')+'<br><b>Notes:</b> '+esc(e.notes||'—')+'</p>';
+  const blob=await idbGet(id).catch(()=>null);
+  if(blob){const url=URL.createObjectURL(blob);html+='<p><a class="btn" href="'+url+'" target="_blank" rel="noopener">Open / Print PDF</a></p><iframe src="'+url+'" style="width:100%;height:520px;border:1px solid #ddd;border-radius:8px"></iframe>'}
+  else if(e.filePath){html+='<p><a class="btn" href="'+esc(e.filePath)+'" target="_blank" rel="noopener">Open / Print PDF (shared)</a></p>'}
+  else if(e.sample){html+='<div class="banner info">This is a SAMPLE entry with no PDF attached — it exists so you can test search, filters, and expiry. File a real COA to see PDF viewing.</div>'}
+  else html+='<div class="banner warn">No PDF stored on this PC for this entry. It may have been filed on another PC, or published in the shared catalog without its PDF copied to coas/.</div>';
+  $('vBody').innerHTML=html; $('viewDlg').showModal();};
+
+// ---------- Render / search ----------
+function render(){
+  $('stTotal').textContent=catalog.length;
+  $('stValid').textContent=catalog.filter(e=>statusOf(e).key==='valid').length;
+  $('stSoon').textContent=catalog.filter(e=>statusOf(e).key==='soon').length;
+  $('stExpired').textContent=catalog.filter(e=>statusOf(e).key==='expired').length;
+  const q=norm($('q').value), store=$('qStore').value, type=$('qType').value, stat=$('qStatus').value;
+  const filtered=catalog.filter(e=>{
+    const hay=norm([e.productName,e.brand,e.strain,e.batchLot,e.barcode,e.lab,e.sampleId].join(' '));
+    if(q && !hay.includes(q))return false;
+    if(store && !(e.stores||[]).includes(store))return false;
+    if(type && e.productType!==type)return false;
+    if(stat==='fail' && ![e.pesticides,e.heavyMetals,e.microbials].includes('Fail'))return false;
+    if(stat && stat!=='fail' && statusOf(e).key!==stat)return false;
+    return true;
+  }).sort((a,b)=>(a.expirationDate||'9999').localeCompare(b.expirationDate||'9999'));
+  $('results').innerHTML=filtered.map(e=>{const s=statusOf(e);const fails=[e.pesticides,e.heavyMetals,e.microbials].includes('Fail');
+    return '<tr><td><b>'+esc(e.productName)+'</b>'+(e.sample?' <span class="badge grey">SAMPLE</span>':'')+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.brand||'')+(e.strain?' · '+esc(e.strain):'')+' · '+esc(e.productType||'')+'</span></td><td>'+esc(e.batchLot)+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.barcode||'')+'</span></td><td>'+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+'</td><td>'+esc(e.expirationDate||'—')+'</td><td><span class="badge '+s.cls+'">'+s.label+'</span></td><td>'+(fails?'<span class="badge bad">FAIL</span>':'<span class="badge ok">Pass</span>')+'<br><span style="font-size:12px;color:var(--mut)">P:'+esc(e.pesticides||'—')+' H:'+esc(e.heavyMetals||'—')+' M:'+esc(e.microbials||'—')+'</span></td><td>'+esc((e.stores||[]).join(', '))+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="viewEntry(\''+e.id+'\')">View</button> <button class="btn sm sec" onclick="editEntry(\''+e.id+'\')">Edit</button> <button class="btn sm danger" onclick="delEntry(\''+e.id+'\')">Delete</button></td></tr>'}).join('')||'<tr><td colspan="8" style="color:var(--mut)">No COAs match. Upload one above, or clear the filters.</td></tr>';
+  $('resultCount').textContent='Showing '+filtered.length+' of '+catalog.length+' COAs';
+}
+['q','qStore','qType','qStatus'].forEach(id=>{$(id).addEventListener('input',render);$(id).addEventListener('change',render)});
+
+// ---------- Missing COA check ----------
+let invRows=[];
+$('invInput').addEventListener('change',async()=>{const f=$('invInput').files[0];if(!f)return;const text=await f.text();invRows=parseCSV(text);$('missingOut').innerHTML='<div class="banner info">Loaded '+invRows.length+' inventory rows from “'+esc(f.name)+'”. Click Run check.</div>'});
+function parseCSV(text){
+  // small CSV parser handling quoted fields
+  const rows=[];let row=[],cur='',inQ=false;const s=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  for(let i=0;i<s.length;i++){const c=s[i];if(inQ){if(c==='"'){if(s[i+1]==='"'){cur+='"';i++}else inQ=false}else cur+=c}else if(c==='"')inQ=true;else if(c===','){row.push(cur);cur=''}else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur=''}else cur+=c}
+  if(cur||row.length){row.push(cur);rows.push(row)}
+  const header=rows[0].map(h=>h.trim()); const idx=n=>header.indexOf(n);
+  const out=[];
+  for(let i=1;i<rows.length;i++){const r=rows[i];if(!r.length||!r.join('').trim())continue;out.push({productName:r[idx('productName')]||r[1]||'',barcode:r[idx('barCode')]||r[idx('barcode')]||'',location:r[idx('locationDisplay')]||''})}
+  return out;
+}
+$('runMissing').addEventListener('click',()=>{
+  if(!invRows.length){$('missingOut').innerHTML='<div class="banner warn">Upload an inventory CSV first — or try it with data/sample-inventory.csv from the repo.</div>';return}
+  const missing=invRows.filter(r=>{
+    if(r.barcode && catalog.some(e=>norm(e.barcode)===norm(r.barcode)))return false;
+    if(r.productName && catalog.some(e=>norm(e.productName).includes(norm(r.productName).replace(/^sample - /,''))||norm(r.productName).includes(norm(e.productName).replace(/^sample - /,''))))return false;
+    return true;
+  });
+  $('missingOut').innerHTML=(missing.length?'<div class="banner warn"><b>'+missing.length+' in-stock item(s) have NO COA on file:</b></div><table><thead><tr><th>Product</th><th>Barcode</th><th>Location</th></tr></thead><tbody>'+missing.map(r=>'<tr><td>'+esc(r.productName)+'</td><td>'+esc(r.barcode)+'</td><td>'+esc(r.location)+'</td></tr>').join('')+'</tbody></table>':'<div class="banner info">✅ Every inventory row matched a COA in the vault (by barcode or product name).</div>');
+});
+
+// ---------- Export / import ----------
+$('expJson').addEventListener('click',()=>download('catalog.json',JSON.stringify({version:1,updated:todayISO(),entries:catalog},null,2)));
+$('expCsv').addEventListener('click',()=>{
+  const cols=['productName','brand','strain','productType','batchLot','barcode','lab','sampleId','testDate','expirationDate','totalThcPercent','totalCbdPercent','pesticides','heavyMetals','microbials','stores','fileName','uploadedBy','uploadedAt','notes'];
+  const cell=v=>'"'+(Array.isArray(v)?v.join('; '):(v||'')).toString().replace(/"/g,'""')+'"';
+  download('coa-catalog.csv',cols.join(',')+'\n'+catalog.map(e=>cols.map(c=>cell(e[c])).join(',')).join('\n'),'text/csv');
+});
+$('impInput').addEventListener('change',async()=>{const f=$('impInput').files[0];if(!f)return;try{const data=JSON.parse(await f.text());const entries=data.entries||data;if(!Array.isArray(entries))throw new Error('No entries array');let n=0;for(const e of entries){if(!catalog.some(x=>x.id===e.id)){catalog.push(e);n++}}saveCatalog();showMsg('Imported '+n+' new entr'+(n===1?'y':'ies')+' from “'+esc(f.name)+'”.','info')}catch(err){showMsg('Import failed: '+esc(err.message),'err')}});
+$('clearSamples').addEventListener('click',()=>{const before=catalog.length;catalog=catalog.filter(e=>!e.sample);saveCatalog();showMsg('Removed '+(before-catalog.length)+' SAMPLE entries.','info')});
+
+// ---------- Boot ----------
+render();
+loadShared().then(render);
+</script>
+</body>
+</html>
