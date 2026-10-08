@@ -173,31 +173,165 @@ async function extractPdfText(file){
   const buf=await file.arrayBuffer();
   const pdf=await pdfjsLib.getDocument({data:buf}).promise;
   let text='';
-  for(let i=1;i<=pdf.numPages;i++){const page=await pdf.getPage(i);const tc=await page.getTextContent();text+=tc.items.map(x=>x.str).join(' ')+'\n'}
+  for(let i=1;i<=pdf.numPages;i++){
+    const page=await pdf.getPage(i); const tc=await page.getTextContent();
+    // Positional reading order: group text items into visual rows (items whose
+    // y coordinates are within ~2.5pt), rows top-to-bottom (y descending in PDF
+    // space), items left-to-right (x ascending) inside a row. Stream order from
+    // pdf.js scrambles multi-column lab layouts; row order resembles the printed page.
+    const rows=[];
+    for(const it of tc.items){
+      if(!it.str) continue;
+      const tr=it.transform||[]; const x=typeof tr[4]==='number'?tr[4]:0; const y=typeof tr[5]==='number'?tr[5]:0;
+      let row=null;
+      for(const r of rows){ if(Math.abs(r.y-y)<=2.5){ row=r; break; } }
+      if(!row){ row={y:y,items:[]}; rows.push(row); }
+      row.items.push({x:x,str:it.str});
+    }
+    rows.sort((a,b)=>b.y-a.y);
+    for(const r of rows){ r.items.sort((a,b)=>a.x-b.x); text+=r.items.map(o=>o.str).join(' ')+'\n'; }
+    text+='\n';
+  }
   return text;
 }
 function parseCOAText(text,filename){
-  const t=' '+text.replace(/\s+/g,' ')+' '; const out={};
-  const grab=(re)=>{const m=t.match(re);return m?(m[1]||'').trim():''};
-  out.batchLot=grab(/(?:Batch|Lot)(?:\s*(?:No\.?|Number|#|ID))?\s*[:#]?\s*([A-Za-z0-9\-_.\/]{3,40})/i);
-  out.sampleId=grab(/(?:Sample\s*(?:ID|#|No\.?))\s*[:#]?\s*([A-Za-z0-9\-_.\/]{3,40})/i);
-  out.barcode=grab(/(?:Barcode|Bar\s*Code|SKU)\s*[:#]?\s*([A-Za-z0-9\-]{4,30})/i);
-  out.totalThcPercent=grab(/Total\s*THC[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)\s*%/i) || grab(/\bTHC\b[^0-9%]{0,15}([0-9]+(?:\.[0-9]+)?)\s*%/i);
-  out.totalCbdPercent=grab(/Total\s*CBD[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)\s*%/i) || grab(/\bCBD\b[^0-9%]{0,15}([0-9]+(?:\.[0-9]+)?)\s*%/i);
-  const dateGrab=(labelRe)=>{const m=t.match(labelRe);if(!m)return'';const raw=m[1];const d=new Date(raw);return isNaN(d)?'':d.toISOString().slice(0,10)};
-  out.testDate=dateGrab(/(?:Test(?:ed)?\s*Date|Date\s*Tested|Analysis\s*Date)\s*[:#]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/i);
-  out.expirationDate=dateGrab(/(?:Expir(?:ation|es?)\s*(?:Date)?)\s*[:#]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/i);
-  out.lab=grab(/((?:[A-Z][A-Za-z& ]+)(?:Laborator(?:y|ies)|Analytics|Testing|Labs?))\b/);
-  const passFor=(name)=>{const re=new RegExp(name+'[^A-Za-z]{0,30}(Pass|Fail)','i');const m=t.match(re);return m?(m[1][0].toUpperCase()+m[1].slice(1).toLowerCase()):''};
-  out.pesticides=passFor('Pesticide'); out.heavyMetals=passFor('Heavy\\s*Metal'); out.microbials=passFor('Microbial');
-  // strain: common phrasing "Strain: X"
-  out.strain=grab(/(?:Strain|Cultivar)\s*[:#]?\s*([A-Za-z][A-Za-z0-9 ]{1,35})/i);
-  // product guess from filename if nothing better
-  out._filenameGuess=filename.replace(/\.pdf$/i,'').replace(/[_-]+/g,' ').trim();
+  filename=filename||'';
+  const t=' '+(text||'').replace(/\s+/g,' ')+' ';
+  const out={batchLot:'',sampleId:'',barcode:'',productName:'',brand:'',strain:'',productType:'',lab:'',
+    testDate:'',expirationDate:'',totalThcPercent:'',totalCbdPercent:'',pesticides:'',heavyMetals:'',microbials:'',
+    notes:'',flags:[]};
+  const STOP=['RESULTS','RESULT','PASS','PASSED','FAIL','FAILED','LIC','LICENSE','CLIENT','SAMPLE','BATCH','LOT','NUMBER','NO','ID','NT','ND','LOQ','LOD','DATE','TESTED','CREATED','RECEIVED','COLLECTED','THE','AND','FOR','SIZE','NAME','TYPE','MATRIX','TOTAL','UNIT','REPORT','ORDER','ANALYTE','STATUS','MOISTURE','CERTIFICATE','ANALYSIS','LAB','LABS'];
+  const badVal=v=>{ if(!v) return true; const w=v.trim().replace(/^[:#,\s]+|[:#,\s]+$/g,''); if(!w) return true;
+    const first=w.split(/\s+/)[0].toUpperCase().replace(/[^A-Z]/g,''); if(STOP.includes(first)) return true;
+    if(/^(pass|fail|not tested|not performed)$/i.test(w)) return true; return false; };
+  const clean=v=>(v||'').trim().replace(/^[:#,\s]+/,'').replace(/[:#,\s]+$/,'').replace(/\s+/g,' ');
+  const grab=(re,src)=>{ const m=(src||t).match(re); if(!m) return ''; const v=clean(m[1]||''); return badVal(v)?'':v; };
+  const MONTHS={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12,
+    january:1,february:2,march:3,april:4,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
+  const DATE_RE='([A-Za-z]{3,9}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}|\\d{4}-\\d{2}-\\d{2})';
+  function toISO(raw){ if(!raw) return ''; raw=raw.trim();
+    let m=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if(m){ let y=+m[3]; if(y<100)y+=2000; return y+'-'+String(+m[1]).padStart(2,'0')+'-'+String(+m[2]).padStart(2,'0'); }
+    m=raw.match(/^(\d{4})-(\d{2})-(\d{2})$/); if(m) return raw;
+    m=raw.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/); if(m){ const mo=MONTHS[m[1].toLowerCase()]; if(mo) return m[3]+'-'+String(mo).padStart(2,'0')+'-'+String(+m[2]).padStart(2,'0'); }
+    return ''; }
+  const dateFor=(labels)=>{ for(const lab of labels){ const re=new RegExp(lab+'\\s*[:#]?\\s*'+DATE_RE,'i'); const m=t.match(re); if(m){ const iso=toISO(m[1]); if(iso) return iso; } } return ''; };
+  const BT='(\\d{4}\\s\\d{4}\\s\\d{4}\\s\\d{4})';
+
+  // ---- Batch / Lot (BioTrack 4x4 first) ----
+  const btBatchReal = grab(new RegExp('BioTrack\\s+(?:Batch|Lot)\\s+ID\\s*[:#]?\\s*'+BT,'i'));
+  out.batchLot = btBatchReal
+              || grab(new RegExp('Batch\\s+Number\\s*[:#]?\\s*'+BT,'i'))
+              || grab(new RegExp('Batch\\s+Number\\s*[:#]?\\s*([A-Za-z0-9][A-Za-z0-9\\-_\\.\\/]{2,30})','i'))
+              || grab(/(?:Batch|Lot)\s*(?:No\.?|Number|#|ID)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-_\.\/ ]{2,30}?)(?=\s+(?:Sample|Date|Category|Matrix|License|Weight|Order)\b|\s*$)/i)
+              || grab(/(?:Batch|Lot)\s*[:#]\s*([A-Za-z0-9][A-Za-z0-9\-_\.\/]{2,30})/i);
+  if(!out.batchLot){ // short batch code (letter/digit code) corroborated by the filename, e.g. a code that also appears in the file name
+    const fn=filename.replace(/\.pdf$/i,'');
+    const cands=t.match(/\b[A-Z]{1,3}\s[A-Z]\d{1,3}\b/g)||[];
+    for(const c of cands){ const squished=c.replace(/\s+/g,''); if(fn.replace(/[^A-Za-z0-9]/g,'').toUpperCase().includes(squished.toUpperCase())){ out.batchLot=c; break; } }
+  }
+  const btSample=grab(new RegExp('BioTrack\\s+Sample\\s+ID\\s*[:#]?\\s*'+BT,'i'));
+  const btBatch=btBatchReal;
+
+  // ---- Sample ID (lab's own sample number first; BioTrack Sample ID is NOT this) ----
+  out.sampleId = grab(/Sample\s*#\s*[:#]?\s*([0-9][A-Za-z0-9\.\-]{1,20})/i)
+              || grab(/(?<!BioTrack\s)Sample\s+ID\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\.\-_\/]{2,30})/i)
+              || grab(/\bSample\s*:\s*([0-9][A-Za-z0-9\.\-]{2,30})/i)
+              || grab(/Internal\s+ID\s*[:#]?\s*([A-Z]{2,4}\s?\d{2,5})/i)
+              || grab(/(?:Sample\s*(?:No\.?|Number))\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\.\-_\/]{2,30})/i);
+
+  // ---- Barcode (conservative: explicit label only) ----
+  out.barcode=grab(/(?:Barcode|Bar\s*Code)\s*[:#]?\s*([A-Za-z0-9\-]{4,30})/i);
+
+  // ---- Lab (tested-by phrase first, then generic lab-suffix scan; never "Potency Testing"-style phrases) ----
+  out.lab = grab(/tested\s+by\s+([A-Z][A-Za-z& ]{1,40}?\s(?:Lab|Labs|Laboratory|Analytics))\s*(?:,|using|with|\.)/i)
+         || grab(/([A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z&]+){0,3}\sAnalytics)\b/)
+         || grab(/([A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z&]+){0,2}\sLabs?(?:\sNM)?)\s*(?:,|\d{3,5}\s|\()/);
+  if(/potency|total|sample|certificate/i.test(out.lab||'')) out.lab='';
+
+  // ---- Dates ----
+  out.testDate = dateFor(['Date\\s+Tested','Date\\s+Analyzed','Date\\s+Analysed','Date\\s+Released','Report\\s+Created','Approved','DATE\\s+ISSUED','Date\\s+Issued','Date\\s+Completed','Test\\s+Date','Analysis\\s+Date','Date\\s+Received']);
+  out.expirationDate = dateFor(['Expiration\\s+Date','Expiry\\s+Date','Expires?\\s*(?:Date)?','Expiration']);
+
+  // ---- Total THC / CBD % (ordered strategies) ----
+  function totalPct(label){
+    const L='Total\\s+'+label;
+    let m;
+    m=t.match(new RegExp(L+'\\s*:?\\s*[\\d\\.]+\\s*mg\\/g\\s*\\(([\\d\\.]+)\\s*%\\)','i')); if(m) return m[1];      // paren-%: "Total THC: 267.1561 mg/g (26.7156 %)"
+    m=t.match(new RegExp(L+'\\s+(ND|<LOQ|NT|NR)\\b','i')); if(m) return '';                                          // table row explicitly ND/<LOQ
+    m=t.match(new RegExp('([\\d\\.]+)\\s*%\\s+'+L+'\\b','i')); if(m) return m[1];                                     // reversed hero: "29.53% Total THC"
+    m=t.match(new RegExp('([\\d\\.]+)\\s*%(?:(?!Total\\s+(?:THC|CBD|Cannabinoids))[^%]){0,90}?'+L+'\\b','i')); if(m) return m[1]; // hero % shortly before label (column layouts), not crossing another Total label
+    m=t.match(new RegExp(L+'\\s*:?\\s*([\\d\\.]+)\\s*%','i')); if(m) return m[1];                                     // direct: "Total THC 0.029%" / "Total THC: 12%"
+    m=t.match(new RegExp(L+'\\s+([\\d\\.]+)\\s+[\\d\\.]+\\s+[\\d\\.]+','i')); if(m) return m[1];                       // table row, % is first column: "Total THC 0.853 8.530 55.445"
+    m=t.match(new RegExp(L+'\\b[^%]{0,110}?([\\d\\.]+)\\s*%','i')); if(m) return m[1];                                // nearby % within a short window (column layouts)
+    return '';
+  }
+  out.totalThcPercent=totalPct('THC');
+  out.totalCbdPercent=totalPct('CBD');
+
+  // ---- Pass / Fail / Not Tested (summary patterns first, then detailed-section scan) ----
+  const normRes=v=>{ v=(v||'').toLowerCase(); if(v.startsWith('pass'))return 'Pass'; if(v.startsWith('fail'))return 'Fail'; if(v.startsWith('not'))return 'Not Tested'; if(v==='nt'||v==='nr')return 'Not Tested'; return ''; };
+  function sectionResult(headingRes){
+    // summary: forward "Name ... Pass" and reversed "Pass ... Name" (short window, word chars only)
+    for(const hr of headingRes){
+      let m=t.match(new RegExp(hr+'\\s+(?:Test\\s+Results\\s+)?(Pass|Fail|Not\\s+Tested|NT)\\b','i')); if(m) return normRes(m[1]);
+      m=t.match(new RegExp('\\b(Pass|Fail|Not\\s+Tested)\\s+'+hr+'\\b','i')); if(m) return normRes(m[1]);
+    }
+    // detailed section: find a heading occurrence followed shortly by a table header, scan its segment
+    let start=-1;
+    for(const hr of headingRes){ const re=new RegExp(hr,'ig'); let mm;
+      while((mm=re.exec(t))){ const after=t.slice(mm.index,mm.index+320); if(/Analyte|Compound|Result|Status|Method|Screen/i.test(after)){ start=mm.index; break; } }
+      if(start>=0) break; }
+    if(start<0){ for(const hr of headingRes){ const mm=t.match(new RegExp(hr,'i')); if(mm){ start=mm.index; break; } } }
+    if(start<0) return '';
+    const seg=t.slice(start,start+2600).replace(/\(pass\/fail\)/gi,' ').replace(/Limits?\s*\(.*?\)/gi,' ');
+    const passCount=(seg.match(/\bPass(?:ed)?\b/gi)||[]).length;
+    const failCount=(seg.match(/\bFail(?:ed)?\b/gi)||[]).length;
+    if(/Test\s+Not\s+Performed|Not\s+Performed/i.test(seg) && passCount===0 && failCount===0) return 'Not Tested';
+    if(/Not\s+Tested/i.test(seg) && passCount===0 && failCount===0) return 'Not Tested';
+    if(failCount>0 && passCount===0) return 'Fail';
+    if(passCount>0) return 'Pass';
+    if(/Absent|Not\s+Detected/i.test(seg)) return 'Pass';
+    return '';
+  }
+  out.pesticides=sectionResult(['Pesticides?(?:\\s+Analysis)?']);
+  out.microbials=sectionResult(['Microbials?(?:\\s+Screen)?(?:\\s*\\(qPCR\\))?','Microbial\\s+Screen']);
+  out.heavyMetals=sectionResult(['Heavy\\s+Metals?']);
+
+  // ---- Brand / product / strain / type (best effort, generic labels) ----
+  out.brand = grab(/Business\s+Name\s*[:#]?\s*([A-Za-z][A-Za-z0-9 &]{2,45}?)(?=\s+(?:Date|License|Address|Batch|Sample)\b)/i)
+           || grab(/(?:Cultivator|Manufacturer|Producer)\s*(?:Name)?\s*[:#]\s*([A-Za-z][A-Za-z0-9 &]{2,45}?)(?=\s+(?:Date|License|Address|Batch|Sample)\b)/i)
+           || grab(/([A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+){0,3})\s+LLC\b/);
+  if(!out.brand){ const m=t.match(/([A-Z][a-z]+(?:\s[A-Z][a-z]+){0,3})\s+\d{3,5}\s+[A-Z][A-Za-z]+\s+(?:Parkway|Street|Avenue|Road|Drive|Boulevard|Blvd|St|Ave|Rd|Dr)\b/); if(m) out.brand=clean(m[1]); }
+  if(!out.brand){ const m=t.match(/([A-Z][a-z]{2,20})\s+[A-Z]{1,3}\s[A-Z]\d{1,3}\s+Certificate\s+of\s+Analysis/i); if(m) out.brand=clean(m[1]); }
+  if(!out.brand){ const v=grab(/([A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+){0,3})\s+Sample\s*:\s*[0-9]/i); if(v && !/certificate|analysis|sample/i.test(v)) out.brand=v; }
+  out.productName = grab(/Sample\s+Name\s*[:#]?\s*([A-Z0-9][A-Za-z0-9 \-\/]{2,60}?)(?=\s*\(|\s+Matrix\b|\s+Batch\b|\s+Sample\b)/i)
+                 || grab(/Product\s+Name\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9 \-\/]{2,60}?)(?=\s+(?:Batch|Sample|Strain|Category|Date)\b)/i)
+                 || grab(/([A-Z][A-Za-z0-9][A-Za-z0-9 \(\)\-]{1,48}?)\s+Sample\s*#\s*:/i)
+                 || grab(/([A-Z][A-Za-z0-9][A-Za-z0-9 \(\)\-]{1,48}?)\s+(?:Plant,\s*Flower|Flower\s*-|Edible\s*-)/i);
+  out.productName=out.productName.replace(/^(AM|PM)\s+/i,'');
+  out.strain=grab(/Strain\s*[:#]?\s*([A-Za-z][A-Za-z0-9 ]{1,34}?)(?=\s+(?:Collected|Sample|BioTrack|Category|Date)\b|\s*$)/i);
+  if(!out.strain && out.productName && /flower/i.test(t.slice(0,1200)) ) out.strain='';
+  if(/Category\/Type\s*:\s*[^.]{0,40}Flower|Plant,\s*Flower/i.test(t)) out.productType='Flower';
+  else if(/Soft\s+Chew|Gumm|Ingestible|\bEdible\b/i.test(t)) out.productType='Edible';
+  else if(/Concentrate|Extract/i.test(t.slice(0,800))) out.productType='Concentrate';
+  else if(/\bVape\b|Cartridge/i.test(t.slice(0,800))) out.productType='Vape';
+
+  // ---- Flags & auto-notes (generic compliance signals) ----
+  const notes=[];
+  if(/Not\s+for\s+Sale\s+or\s+Transfer/i.test(t)){ out.flags.push('R&D / Not for Sale or Transfer'); notes.push('COA states: Not for Sale or Transfer (R&D).'); }
+  if(/Potency\s+Testing\s+Only/i.test(t)){ out.flags.push('Potency testing only'); notes.push('COA states: Potency Testing Only — other analyses not performed.'); }
+  if(/valid\s+for\s+1\s+year/i.test(t)) notes.push('COA states results are valid for 1 year (no printed expiration date).');
+  if(/Total\s+CBD\s*(?:=|\s)\s*(?:ND|<LOQ)/i.test(t) || /<LOQ\s+Total\s+CBD/i.test(t) || /ND\s+Total\s+CBD/i.test(t)) notes.push('Total CBD reported as ND / <LOQ.');
+  if(btSample && btSample!==out.sampleId) notes.push('BioTrack Sample ID: '+btSample+'.');
+  if(btBatch) notes.push('BioTrack Batch/Lot ID: '+btBatch+'.');
+  const rep=grab(/Report\s*#\s*[:#]?\s*([A-Za-z0-9\-]{2,20})/i); if(rep) notes.push('Report #: '+rep+'.');
+  const ord=grab(/Order\s*#\s*[:#]?\s*([A-Za-z0-9\-]{2,25})/i); if(ord) notes.push('Order #: '+ord+'.');
+  out.notes=notes.join(' ');
+  out._filenameGuess=filename.replace(/\.pdf$/i,'').replace(/[_]+/g,' ').replace(/\s+/g,' ').trim();
   return out;
 }
 function fillForm(p,onlyEmpty=true){
-  const map={productName:'f_productName',brand:'f_brand',strain:'f_strain',batchLot:'f_batchLot',barcode:'f_barcode',lab:'f_lab',sampleId:'f_sampleId',testDate:'f_testDate',expirationDate:'f_expirationDate',totalThcPercent:'f_totalThcPercent',totalCbdPercent:'f_totalCbdPercent',pesticides:'f_pesticides',heavyMetals:'f_heavyMetals',microbials:'f_microbials'};
+  const map={productName:'f_productName',brand:'f_brand',strain:'f_strain',productType:'f_productType',batchLot:'f_batchLot',barcode:'f_barcode',lab:'f_lab',sampleId:'f_sampleId',testDate:'f_testDate',expirationDate:'f_expirationDate',totalThcPercent:'f_totalThcPercent',totalCbdPercent:'f_totalCbdPercent',pesticides:'f_pesticides',heavyMetals:'f_heavyMetals',microbials:'f_microbials',notes:'f_notes'};
   for(const k in map){ if(p[k] && (!onlyEmpty || !$(map[k]).value)) $(map[k]).value=p[k] }
   checkDup();
 }
@@ -234,14 +368,14 @@ async function handleFiles(files){
 function renderQueueItem(file,status,parsed){
   const idx=queue.indexOf(file); let el=document.querySelector('[data-q="'+idx+'"]');
   if(!el){el=document.createElement('div');el.className='queueItem';el.dataset.q=idx;$('queue').appendChild(el)}
-  el.innerHTML='<b>'+esc(file.name)+'</b> — '+esc(status)+(parsed&&parsed.batchLot?' · Batch guess: <b>'+esc(parsed.batchLot)+'</b>':'')+' &nbsp;<button type="button" class="btn sm sec" onclick="useFile('+idx+')">Use this file</button>';
+  el.innerHTML='<b>'+esc(file.name)+'</b> — '+esc(status)+(parsed&&parsed.batchLot?' · Batch guess: <b>'+esc(parsed.batchLot)+'</b>':'')+(parsed&&parsed.flags&&parsed.flags.length?' · ⚠️ <b>'+esc(parsed.flags.join('; '))+'</b>':'')+' &nbsp;<button type="button" class="btn sm sec" onclick="useFile('+idx+')">Use this file</button>';
 }
 window.useFile=async function(idx){
   const f=queue[idx]; if(!f)return;
   pendingFile=f; pendingFileName=f.name; $('f_fileName').textContent=f.name;
   if(f._parsed) fillForm(f._parsed,false);
   if(!$('f_productName').value && f._parsed && f._parsed._filenameGuess) $('f_productName').value=f._parsed._filenameGuess;
-  showMsg('File “'+esc(f.name)+'” attached to the form below. Review the auto-filled fields, fix anything wrong, then Save.','info');
+  const fl=f._parsed&&f._parsed.flags?f._parsed.flags:[]; showMsg('File “'+esc(f.name)+'” attached to the form below. Review the auto-filled fields, fix anything wrong, then Save.'+(fl.length?' <b>⚠️ Flags from this COA: '+esc(fl.join('; '))+'</b>':''),fl.length?'warn':'info');
   $('coaForm').scrollIntoView({behavior:'smooth'});
 };
 

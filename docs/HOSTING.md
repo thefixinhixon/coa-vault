@@ -38,13 +38,32 @@ reveals vendors, product mix, and batch flow. Options:
 
 Recommendation: **public app, private data** until we build v2 sync.
 
+### The two-repo model (adopted by The Greenery Room, 2026-10-08)
+
+The origin deployment splits this cleanly, and it's the pattern we'd
+recommend to anyone using this tool commercially:
+
+- **This repo (public)** — the tool: app code, generic docs, sample data.
+  Improvements land here first, tested against sample/generic data only.
+- **A second, private repo (theirs is `coa-vault-internal`)** — the
+  deployment: the same `index.html` copied over, plus the business's real
+  `data/catalog.json` and real COA PDFs in `coas/`.
+
+The private repo's own README/SYNC doc defines its rule: app code flows
+public → private (copy `index.html`); real data never flows back.
+
 ## v2 roadmap (in priority order)
 
 1. **In-app GitHub publish** — staff log in with GitHub in the app and
    “Publish” commits the PDF + catalog entry directly. One shared vault,
    no manager export step. Needs a fine-grained token / GitHub App flow.
-2. **Real sample-COA tuning** — feed 5–10 real NM lab PDFs through the
-   extractor and add per-lab parsing rules (labs format THC/batch very differently).
+2. ~~**Real sample-COA tuning**~~ — **Done in v1.1 (2026-10-08)** for three
+   NM lab formats (a Confident LIMS template used by two labs, plus two
+   other layouts incl. an R&D potency-only format), using generic patterns
+   only — no real COA data in this repo. The extractor now reads PDFs
+   positionally (row/column order) and scored 9/9 key fields on all four
+   test COAs in layout mode. More lab formats = more patterns; the
+   uploader-confirm step stays essential.
 3. **QR lookup** — print a small QR per batch (ties into the Label Generator)
    so a scan opens that batch's COA — for staff and, if wanted, customers.
 4. **Auto missing-COA report** — auto-load the current inventory CSV
