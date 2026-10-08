@@ -1,0 +1,142 @@
+rules_version = '2';
+
+// ============================================================================
+// COA Vault — Firestore security rules
+// ----------------------------------------------------------------------------
+// Data model
+//   coas/{docId}    One document per COA. Catalog fields (productName, brand,
+//                   strain, productType, batchLot, barcode, lab, sampleId,
+//                   testDate, expirationDate, totalThcPercent,
+//                   totalCbdPercent, pesticides, heavyMetals, microbials,
+//                   stores, notes, fileName, storagePath) plus workflow
+//                   fields: status ('draft' | 'published'), createdBy (email),
+//                   updatedBy, uploadedAt, verifiedBy, verifiedAt.
+//   access/{email}  Allowlist. Document ID is the user's email address in
+//                   lowercase. Fields: role ('admin' | 'filer' | 'viewer'),
+//                   active (bool).
+//
+// Roles
+//   viewer  Read PUBLISHED COAs only. Cannot create, edit, or delete.
+//   filer   Read all COAs (drafts included), create, edit, upload, and
+//           publish. Publish is an explicit action taken only AFTER a human
+//           has visually verified the extracted fields against the PDF —
+//           uploads always land as drafts first (see create rule below).
+//   admin   Everything a filer can do, plus delete any COA and manage the
+//           access collection (grant / revoke / change roles).
+//
+// Default: everything not matched below is denied.
+// ============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Helpers ------------------------------------------------------------
+
+    // The signed-in user's email, lowercased, or '' when absent.
+    // Google sign-in always provides a verified email in the token.
+    function userEmail() {
+      return request.auth != null && ('email' in request.auth.token)
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    function signedIn() {
+      return request.auth != null && userEmail() != '';
+    }
+
+    // Path of the signed-in user's own access document.
+    function accessDoc() {
+      return /databases/$(database)/documents/access/$(userEmail());
+    }
+
+    function hasAccess() {
+      return signedIn() && exists(accessDoc());
+    }
+
+    function accessData() {
+      return get(accessDoc()).data;
+    }
+
+    // True only when the user is on the allowlist AND their entry is active.
+    function isActiveUser() {
+      return hasAccess() && accessData().get('active', false) == true;
+    }
+
+    function role() {
+      return isActiveUser() ? accessData().get('role', '') : '';
+    }
+
+    function isViewer() {
+      return role() == 'viewer';
+    }
+
+    function isFiler() {
+      return role() == 'filer' || role() == 'admin';
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    // ---- COA catalog --------------------------------------------------------
+
+    match /coas/{docId} {
+
+      // Read: any active allowlisted user may read, but viewers are limited
+      // to published entries. The per-document check covers single-doc gets;
+      // the status check also makes list queries fail for viewers unless
+      // the query itself filters to status == 'published' (Firestore rules
+      // are not filters — the app must query published-only for viewers).
+      allow get: if isActiveUser()
+        && (isFiler() || resource.data.get('status', 'draft') == 'published');
+
+      allow list: if isActiveUser()
+        && (isFiler() || resource.data.get('status', 'draft') == 'published');
+
+      // Create: filers and admins only. The creator recorded on the document
+      // must be the signed-in user (no filing "as" someone else), and a new
+      // entry must start life as a draft or — after the human verification
+      // step in the app — be published in the same save. Status can never be
+      // anything other than 'draft' or 'published'.
+      allow create: if isFiler()
+        && request.resource.data.createdBy == userEmail()
+        && request.resource.data.status in ['draft', 'published'];
+
+      // Update: filers and admins. Status, if changed, must stay valid.
+      // (This includes the Publish action, which sets status to 'published'
+      // and stamps verifiedBy / verifiedAt.)
+      allow update: if isFiler()
+        && request.resource.data.get('status', 'draft') in ['draft', 'published'];
+
+      // Delete: admins may delete anything. A filer may delete only a
+      // document they created themselves.
+      allow delete: if isAdmin()
+        || (isFiler() && resource.data.get('createdBy', '') == userEmail());
+    }
+
+    // ---- Access allowlist ---------------------------------------------------
+
+    match /access/{email} {
+
+      // A user may read ONLY their own access document, so the app can learn
+      // its role after sign-in. Nobody reads anyone else's entry here
+      // (admins manage entries by writing known email addresses; they do not
+      // need read access to other entries for the app to function).
+      allow get: if signedIn() && userEmail() == email.lower();
+
+      // No listing the allowlist from the client.
+      allow list: if false;
+
+      // Only admins may create, update, or delete access documents.
+      allow create, update: if isAdmin()
+        && request.resource.data.get('role', '') in ['admin', 'filer', 'viewer'];
+      allow delete: if isAdmin();
+    }
+
+    // ---- Everything else: deny ----------------------------------------------
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

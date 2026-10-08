@@ -75,3 +75,28 @@ public → private (copy `index.html`); real data never flows back.
 One catalog entry per COA PDF / batch. Fields are defined by the form in
 `index.html` and the sample entries in `data/catalog.json` — that JSON is
 the interchange format for export/import/publishing.
+
+## Firebase backend (v2)
+
+The v2 architecture keeps the app itself on GitHub Pages and adds
+**Firebase as the backend only** — no Firebase Hosting deploy required:
+
+- **Authentication (Google sign-in):** staff sign in with the Google
+  accounts they already have. **No GitHub accounts for staff**, and no
+  collaborator invites to manage.
+- **Firestore:** the shared catalog lives in a database, keyed by an
+  email allowlist with `viewer` / `filer` / `admin` roles
+  (see `firestore.rules`).
+- **Cloud Storage:** the COA PDFs, fetchable only by signed-in,
+  allowlisted users (see `storage.rules`).
+
+The collaborative workflow becomes live: a filer uploads a COA, it lands
+as a **draft**, a human **visually verifies the extracted fields against
+the PDF**, and an explicit **Publish** makes it `published` — at which
+point every other signed-in user sees it immediately, on any PC. That
+verification gate is a hard requirement, not a step to automate away:
+fully automatic publish-on-upload is deliberately not supported.
+
+Full owner setup (project creation, sign-in, rules, allowlist bootstrap,
+first-run migration, costs, troubleshooting):
+**[docs/FIREBASE_SETUP.md](FIREBASE_SETUP.md)**.

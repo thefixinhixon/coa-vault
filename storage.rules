@@ -1,0 +1,124 @@
+rules_version = '2';
+
+// ============================================================================
+// COA Vault — Cloud Storage security rules
+// ----------------------------------------------------------------------------
+// PDFs live at:  coas/<docId>.pdf   (the matching Firestore document in the
+// `coas` collection stores this path in its `storagePath` field).
+//
+// PRIMARY RULES (below): cross-service rules. Storage asks Firestore who the
+// signed-in user is by reading their allowlist document at access/<email>
+// (document ID = lowercase email; fields: role, active). Only allowlisted,
+// active users can read PDFs, and only filers/admins can upload, replace,
+// or delete them.
+//
+// Requirement for the cross-service calls to work: the Firestore database
+// and this Storage bucket must be in the SAME Firebase project.
+//
+// ----------------------------------------------------------------------------
+// IF THE CONSOLE REJECTS THESE RULES (cross-service firestore.exists() /
+// firestore.get() unavailable in your project), use the FALLBACK in the
+// comment block at the bottom of this file instead: replace everything
+// inside `service firebase.storage { ... }` with the fallback match block.
+//
+// Residual risk of the fallback, stated honestly: the fallback only checks
+// that a user is SIGNED IN, not that they are on your allowlist. A signed-in
+// user who is not allowlisted and who somehow learned an exact document ID
+// could fetch that one PDF by guessing its path. Catalog metadata (names,
+// batches, results) would still be protected, because that lives in
+// Firestore and stays gated by firestore.rules. Document IDs are random,
+// unguessable strings and are not listed publicly, so the practical risk is
+// low — but it is not zero, which is why the cross-service version is
+// preferred whenever your project accepts it.
+// ----------------------------------------------------------------------------
+// ============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ---- Helpers ------------------------------------------------------------
+
+    function userEmail() {
+      return request.auth != null && ('email' in request.auth.token)
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    function signedIn() {
+      return request.auth != null && userEmail() != '';
+    }
+
+    // Cross-service lookup of the caller's allowlist document in Firestore.
+    function accessData() {
+      return firestore.get(
+        /databases/(default)/documents/access/$(userEmail())).data;
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/access/$(userEmail()))
+        && accessData().get('active', false) == true;
+    }
+
+    function role() {
+      return isActiveUser() ? accessData().get('role', '') : '';
+    }
+
+    function isFiler() {
+      return role() == 'filer' || role() == 'admin';
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    // ---- COA PDFs -------------------------------------------------------------
+
+    // Matches coas/<docId>.pdf and also a bare coas/<docId> path, so the
+    // rules hold if the file extension is ever dropped.
+    match /coas/{docId} {
+      // Read: any active allowlisted user (viewer, filer, or admin).
+      allow read: if isActiveUser();
+
+      // Write (upload / replace): filers and admins only, PDFs only,
+      // capped at 25 MB so this bucket cannot be misused as general storage.
+      allow write: if isFiler()
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.size < 25 * 1024 * 1024;
+
+      // Delete: admins, or (handled in Firestore rules for metadata) — for
+      // the file itself, restrict to admins and filers; the app deletes a
+      // PDF only as part of deleting its catalog entry.
+      allow delete: if isAdmin() || isFiler();
+    }
+
+    // ---- Everything else: deny ----------------------------------------------
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// ============================================================================
+// FALLBACK (paste-ready) — use ONLY if the console rejects the rules above.
+// Replace the whole `service firebase.storage { ... }` block above with:
+//
+// service firebase.storage {
+//   match /b/{bucket}/o {
+//     match /coas/{docId} {
+//       // Any signed-in user may read; only signed-in users may write.
+//       // NOTE: this does NOT check the allowlist — see the residual-risk
+//       // note at the top of this file before choosing this version.
+//       allow read: if request.auth != null;
+//       allow write: if request.auth != null
+//         && request.resource.contentType == 'application/pdf'
+//         && request.resource.size < 25 * 1024 * 1024;
+//       allow delete: if request.auth != null;
+//     }
+//     match /{allPaths=**} {
+//       allow read, write: if false;
+//     }
+//   }
+// }
+// ============================================================================

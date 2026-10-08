@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>COA Vault — The Greenery Room</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="firebase-config.js"></script>
 <style>
 :root{--green:#1d4d2b;--green2:#2e7d44;--bg:#f4f6f3;--card:#fff;--line:#d9e2d9;--mut:#667;--red:#b42318;--amber:#b54708;--amberbg:#fffaeb;--redbg:#fef3f2;--ok:#027a48;--okbg:#ecfdf3}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:#172}
@@ -30,8 +35,21 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 </style>
 </head>
 <body>
-<header><h1>🌿 COA Vault</h1><p>The Greenery Room — Certificates of Analysis for Ruidoso · Alto · Carrizozo &nbsp;|&nbsp; v1 Prototype</p></header>
+<header><h1>🌿 COA Vault</h1><p>The Greenery Room — Certificates of Analysis for Ruidoso · Alto · Carrizozo &nbsp;|&nbsp; v2 — Firebase-ready (runs in Local Demo mode until firebase-config.js is filled in)</p></header>
 <div class="wrap">
+
+<section class="card" id="authCard">
+  <h2>Account</h2>
+  <p class="hint" id="authStatus">Checking sign-in…</p>
+  <div class="row">
+    <button class="btn" id="authBtn" type="button">Sign in with Google</button>
+    <div id="cloudTools" class="hidden">
+      <label>Attach PDFs to entries missing files (bulk — matched by file name)</label>
+      <input type="file" id="attachInput" accept="application/pdf,.pdf" multiple>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:8px">Local Demo mode stores everything in this browser only. Cloud mode (signed in with an authorized account) stores the catalog in Firestore and PDFs in Cloud Storage, with a Draft → human verify → Publish workflow. Viewers only ever see Published COAs.</p>
+</section>
 
 <div id="msg"></div>
 
@@ -151,7 +169,7 @@ async function idbDel(key){const db=await idb();return new Promise((res,rej)=>{c
 const LS_KEY='coa-vault-catalog-v1';
 let catalog=[]; let pendingFile=null; let pendingFileName=''; let queue=[];
 try{catalog=JSON.parse(localStorage.getItem(LS_KEY)||'[]')}catch(e){catalog=[]}
-function saveCatalog(){localStorage.setItem(LS_KEY,JSON.stringify(catalog));render()}
+function saveCatalog(){ if(window.__CLOUD){ render(); return; } localStorage.setItem(LS_KEY,JSON.stringify(catalog));render()}
 function uid(){return 'coa-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8)}
 
 async function loadShared(){
@@ -165,6 +183,85 @@ async function loadShared(){
     if(added){localStorage.setItem(LS_KEY,JSON.stringify(catalog)); showMsg(added+' shared / sample COA(s) loaded from data/catalog.json. They are marked SAMPLE until you remove them.','info')}
   }catch(e){/* file:// or no shared catalog - local mode only */}
 }
+
+
+// ---------- Firebase cloud layer (v2) ----------
+let fbDb=null, fbAuth=null, fbStore=null, currentUser=null, currentRole=null, unsubCoas=null;
+window.__CLOUD=false;
+function canFile(){return currentRole==='admin'||currentRole==='filer'}
+function fbReady(){ const c=window.FIREBASE_CONFIG; return !!(c && c.apiKey && c.projectId && window.firebase); }
+function startCloudListener(){
+  if(unsubCoas){unsubCoas(); unsubCoas=null}
+  let q=fbDb.collection('coas');
+  if(currentRole==='viewer') q=q.where('status','==','published');
+  unsubCoas=q.onSnapshot(snap=>{
+    catalog=snap.docs.map(d=>Object.assign({id:d.id},d.data()));
+    catalog.sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+    render();
+  },err=>{ showMsg('Cloud catalog error: '+esc(err.message),'err') });
+}
+function stopCloudListener(){ if(unsubCoas){unsubCoas(); unsubCoas=null} }
+function updateAuthUI(){
+  const st=$('authStatus'), btn=$('authBtn');
+  if(!window.__CLOUD){ st.innerHTML='<b>Local Demo mode</b> — no Firebase config found, so this vault lives in this browser only. See docs/FIREBASE_SETUP.md to connect the shared cloud vault.'; btn.classList.add('hidden'); return; }
+  btn.classList.remove('hidden');
+  if(!currentUser){ st.innerHTML='<b>Cloud mode</b> — sign in with your work Google account to use the shared vault.'; btn.textContent='Sign in with Google'; $('cloudTools').classList.add('hidden'); return; }
+  btn.textContent='Sign out ('+currentUser.email+')';
+  if(currentRole){ st.innerHTML='<b>Cloud vault</b> — signed in as '+esc(currentUser.email)+' · role: <b>'+esc(currentRole)+'</b>'+(currentRole==='viewer'?' · you see Published COAs only.':(canFile()?' · you can file Drafts and Publish after visual verification.':'')); }
+  else { st.innerHTML='<b>Signed in as '+esc(currentUser.email)+'</b> but this email is <b>not authorized</b> yet. Ask the vault admin to add your email in Firestore → access (see docs/FIREBASE_SETUP.md).'; }
+  $('cloudTools').classList.toggle('hidden', !canFile());
+  $('clearSamples').classList.toggle('hidden', !!window.__CLOUD);
+}
+function fbInit(){
+  if(!fbReady()){ updateAuthUI(); return false; }
+  try{ firebase.initializeApp(window.FIREBASE_CONFIG); }catch(e){ updateAuthUI(); return false; }
+  window.__CLOUD=true; fbAuth=firebase.auth(); fbDb=firebase.firestore(); fbStore=firebase.storage();
+  $('authBtn').addEventListener('click', async ()=>{
+    if(currentUser){ await fbAuth.signOut(); return; }
+    try{ await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }catch(err){ showMsg('Sign-in failed: '+esc(err.message),'err') }
+  });
+  fbAuth.onAuthStateChanged(async user=>{
+    currentUser=user||null; currentRole=null; stopCloudListener();
+    if(user){
+      if(!$('f_uploadedBy').value) $('f_uploadedBy').value=user.displayName||user.email;
+      try{
+        const snap=await fbDb.collection('access').doc((user.email||'').toLowerCase()).get();
+        if(snap.exists && snap.data().active!==false) currentRole=snap.data().role||null;
+      }catch(err){ /* rules may deny until access doc exists */ }
+      if(currentRole){ catalog=[]; startCloudListener(); }
+      else { catalog=[]; render(); }
+    } else { catalog=[]; render(); }
+    updateAuthUI();
+  });
+  updateAuthUI();
+  return true;
+}
+window.publishEntry=async function(id){
+  const e=catalog.find(x=>x.id===id); if(!e||!window.__CLOUD) return;
+  if(!canFile()){ showMsg('Your role cannot publish.','err'); return; }
+  const ok=confirm('PUBLISH this COA — only do this after VISUALLY VERIFYING these details against the PDF itself:\n\nProduct: '+e.productName+'\nBatch/Lot: '+e.batchLot+'\nLab: '+(e.lab||'—')+' · Sample: '+(e.sampleId||'—')+'\nTest date: '+(e.testDate||'—')+' · THC: '+(e.totalThcPercent||'—')+'% · CBD: '+(e.totalCbdPercent||'—')+'%\nPesticides: '+(e.pesticides||'—')+' · Heavy metals: '+(e.heavyMetals||'—')+' · Microbials: '+(e.microbials||'—')+'\n\nPublish now so all authorized users can see it?');
+  if(!ok) return;
+  try{ await fbDb.collection('coas').doc(id).update({status:'published',verifiedBy:currentUser.email,verifiedAt:todayISO(),updatedBy:currentUser.email}); showMsg('✅ Published “'+esc(e.productName)+'”. All authorized users can now see it.','info'); }
+  catch(err){ showMsg('Publish failed: '+esc(err.message),'err') }
+};
+$('attachInput') && $('attachInput').addEventListener('change', async ()=>{
+  const files=[...$('attachInput').files]; if(!files.length) return;
+  if(!window.__CLOUD || !canFile()){ showMsg('Bulk attach is a cloud feature for filers/admins.','err'); return; }
+  let done=0, skipped=[];
+  for(const f of files){
+    // strict matching only: exact original fileName, else skip rather than guess
+    const match=catalog.find(x=>x.fileName===f.name);
+    if(!match){ skipped.push(f.name); continue; }
+    try{
+      const path='coas/'+match.id+'.pdf';
+      await fbStore.ref().child(path).put(f);
+      await fbDb.collection('coas').doc(match.id).update({storagePath:path,fileName:f.name,updatedBy:currentUser.email});
+      done++;
+    }catch(err){ skipped.push(f.name+' ('+err.message+')'); }
+  }
+  $('attachInput').value='';
+  showMsg('Attached '+done+' PDF(s) to their catalog entries.'+(skipped.length?' Skipped (no entry with a matching file name, or upload error): '+esc(skipped.join(', ')):''), skipped.length?'warn':'info');
+});
 
 // ---------- PDF auto-extract ----------
 if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' }
@@ -382,6 +479,34 @@ window.useFile=async function(idx){
 // ---------- Save / edit / delete / view ----------
 $('coaForm').addEventListener('submit',async e=>{
   e.preventDefault();
+  if(window.__CLOUD){
+    if(!currentUser){ showMsg('Sign in first — cloud saves go to the shared vault.','err'); return; }
+    if(!canFile()){ showMsg('Your role ('+(currentRole||'none')+') cannot file COAs. Viewers can search and print only.','err'); return; }
+    const storesC=[...document.querySelectorAll('.storeBox:checked')].map(x=>x.value);
+    const idC=$('f_id').value||uid();
+    const existingC=catalog.find(x=>x.id===idC);
+    const entryC={id:idC,
+      productName:$('f_productName').value.trim(),brand:$('f_brand').value.trim(),strain:$('f_strain').value.trim(),
+      productType:$('f_productType').value,batchLot:$('f_batchLot').value.trim(),barcode:$('f_barcode').value.trim(),
+      lab:$('f_lab').value.trim(),sampleId:$('f_sampleId').value.trim(),testDate:$('f_testDate').value,expirationDate:$('f_expirationDate').value,
+      totalThcPercent:$('f_totalThcPercent').value.trim(),totalCbdPercent:$('f_totalCbdPercent').value.trim(),
+      pesticides:$('f_pesticides').value,heavyMetals:$('f_heavyMetals').value,microbials:$('f_microbials').value,
+      uploadedBy:$('f_uploadedBy').value.trim()||currentUser.email,stores:storesC,notes:$('f_notes').value.trim(),
+      fileName:pendingFileName||(existingC?existingC.fileName||'':''),
+      filePath:'',sample:false,
+      status: existingC ? (existingC.status||'draft') : 'draft',
+      createdBy: existingC ? (existingC.createdBy||currentUser.email) : currentUser.email,
+      updatedBy: currentUser.email,
+      uploadedAt: existingC ? (existingC.uploadedAt||todayISO()) : todayISO()};
+    try{
+      if(pendingFile){ const path='coas/'+idC+'.pdf'; await fbStore.ref().child(path).put(pendingFile); entryC.storagePath=path; }
+      else if(existingC && existingC.storagePath) entryC.storagePath=existingC.storagePath;
+      await fbDb.collection('coas').doc(idC).set(entryC);
+    }catch(err){ showMsg('Cloud save failed: '+esc(err.message),'err'); return; }
+    pendingFile=null; pendingFileName=''; clearForm(true);
+    showMsg('✅ Saved “'+esc(entryC.productName)+'” as a <b>Draft</b> in the shared vault. Visually verify it against the PDF, then click <b>Publish</b> on its row so everyone else can see it.','info');
+    return;
+  }
   const stores=[...document.querySelectorAll('.storeBox:checked')].map(x=>x.value);
   const id=$('f_id').value||uid();
   const entry={id,
@@ -406,9 +531,13 @@ window.editEntry=function(id){const e=catalog.find(x=>x.id===id);if(!e)return;cl
   $('f_id').value=e.id;$('f_productName').value=e.productName||'';$('f_brand').value=e.brand||'';$('f_strain').value=e.strain||'';$('f_productType').value=e.productType||'Other';$('f_batchLot').value=e.batchLot||'';$('f_barcode').value=e.barcode||'';$('f_lab').value=e.lab||'';$('f_sampleId').value=e.sampleId||'';$('f_testDate').value=e.testDate||'';$('f_expirationDate').value=e.expirationDate||'';$('f_totalThcPercent').value=e.totalThcPercent||'';$('f_totalCbdPercent').value=e.totalCbdPercent||'';$('f_pesticides').value=e.pesticides||'';$('f_heavyMetals').value=e.heavyMetals||'';$('f_microbials').value=e.microbials||'';$('f_uploadedBy').value=e.uploadedBy||'';$('f_notes').value=e.notes||'';$('f_fileName').textContent=e.fileName||e.filePath||'— none —';
   document.querySelectorAll('.storeBox').forEach(b=>b.checked=(e.stores||[]).includes(b.value));
   window.scrollTo({top:$('coaForm').offsetTop-80,behavior:'smooth'});};
-window.delEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;if(!confirm('Delete “'+e.productName+'” (Batch '+e.batchLot+') from the vault on this PC?'))return;catalog=catalog.filter(x=>x.id!==id);try{await idbDel(id)}catch(_){} saveCatalog();};
+window.delEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;
+  if(window.__CLOUD){ if(!confirm('Delete “'+e.productName+'” (Batch '+e.batchLot+') from the SHARED vault for everyone?'))return;
+    try{ await fbDb.collection('coas').doc(id).delete(); if(e.storagePath){ try{await fbStore.ref().child(e.storagePath).delete()}catch(_){} } }catch(err){ showMsg('Delete failed: '+esc(err.message),'err') } return; }
+  if(!confirm('Delete “'+e.productName+'” (Batch '+e.batchLot+') from the vault on this PC?'))return;catalog=catalog.filter(x=>x.id!==id);try{await idbDel(id)}catch(_){} saveCatalog();};
 window.viewEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;$('vTitle').textContent=e.productName;
   let html='<p><b>Batch/Lot:</b> '+esc(e.batchLot)+' &nbsp; <b>Brand:</b> '+esc(e.brand||'—')+' &nbsp; <b>Strain:</b> '+esc(e.strain||'—')+'<br><b>Lab:</b> '+esc(e.lab||'—')+' &nbsp; <b>Sample:</b> '+esc(e.sampleId||'—')+'<br><b>Test date:</b> '+esc(e.testDate||'—')+' &nbsp; <b>Expires:</b> '+esc(e.expirationDate||'—')+' ('+statusOf(e).label+')<br><b>THC:</b> '+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+' &nbsp; <b>CBD:</b> '+esc(e.totalCbdPercent?e.totalCbdPercent+'%':'—')+'<br><b>Pesticides:</b> '+esc(e.pesticides||'—')+' · <b>Heavy metals:</b> '+esc(e.heavyMetals||'—')+' · <b>Microbials:</b> '+esc(e.microbials||'—')+'<br><b>Stores:</b> '+esc((e.stores||[]).join(', '))+' &nbsp; <b>Barcode:</b> '+esc(e.barcode||'—')+'<br><b>Notes:</b> '+esc(e.notes||'—')+'</p>';
+  if(window.__CLOUD && e.storagePath){ try{ const url=await fbStore.ref().child(e.storagePath).getDownloadURL(); html+='<p><a class="btn" href="'+url+'" target="_blank" rel="noopener">Open / Print PDF</a></p><iframe src="'+url+'" style="width:100%;height:520px;border:1px solid #ddd;border-radius:8px"></iframe>'; $('vBody').innerHTML=html; $('viewDlg').showModal(); return; }catch(err){ html+='<div class="banner warn">Could not load the PDF from cloud storage ('+esc(err.message)+').</div>'; } }
   const blob=await idbGet(id).catch(()=>null);
   if(blob){const url=URL.createObjectURL(blob);html+='<p><a class="btn" href="'+url+'" target="_blank" rel="noopener">Open / Print PDF</a></p><iframe src="'+url+'" style="width:100%;height:520px;border:1px solid #ddd;border-radius:8px"></iframe>'}
   else if(e.filePath){html+='<p><a class="btn" href="'+esc(e.filePath)+'" target="_blank" rel="noopener">Open / Print PDF (shared)</a></p>'}
@@ -433,7 +562,7 @@ function render(){
     return true;
   }).sort((a,b)=>(a.expirationDate||'9999').localeCompare(b.expirationDate||'9999'));
   $('results').innerHTML=filtered.map(e=>{const s=statusOf(e);const fails=[e.pesticides,e.heavyMetals,e.microbials].includes('Fail');
-    return '<tr><td><b>'+esc(e.productName)+'</b>'+(e.sample?' <span class="badge grey">SAMPLE</span>':'')+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.brand||'')+(e.strain?' · '+esc(e.strain):'')+' · '+esc(e.productType||'')+'</span></td><td>'+esc(e.batchLot)+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.barcode||'')+'</span></td><td>'+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+'</td><td>'+esc(e.expirationDate||'—')+'</td><td><span class="badge '+s.cls+'">'+s.label+'</span></td><td>'+(fails?'<span class="badge bad">FAIL</span>':'<span class="badge ok">Pass</span>')+'<br><span style="font-size:12px;color:var(--mut)">P:'+esc(e.pesticides||'—')+' H:'+esc(e.heavyMetals||'—')+' M:'+esc(e.microbials||'—')+'</span></td><td>'+esc((e.stores||[]).join(', '))+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="viewEntry(\''+e.id+'\')">View</button> <button class="btn sm sec" onclick="editEntry(\''+e.id+'\')">Edit</button> <button class="btn sm danger" onclick="delEntry(\''+e.id+'\')">Delete</button></td></tr>'}).join('')||'<tr><td colspan="8" style="color:var(--mut)">No COAs match. Upload one above, or clear the filters.</td></tr>';
+    return '<tr><td><b>'+esc(e.productName)+'</b>'+(e.sample?' <span class="badge grey">SAMPLE</span>':'')+(window.__CLOUD?(e.status==='draft'?' <span class="badge warn">DRAFT — not yet published</span>':' <span class="badge ok">PUBLISHED</span>'):'')+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.brand||'')+(e.strain?' · '+esc(e.strain):'')+' · '+esc(e.productType||'')+'</span></td><td>'+esc(e.batchLot)+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.barcode||'')+'</span></td><td>'+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+'</td><td>'+esc(e.expirationDate||'—')+'</td><td><span class="badge '+s.cls+'">'+s.label+'</span></td><td>'+(fails?'<span class="badge bad">FAIL</span>':'<span class="badge ok">Pass</span>')+'<br><span style="font-size:12px;color:var(--mut)">P:'+esc(e.pesticides||'—')+' H:'+esc(e.heavyMetals||'—')+' M:'+esc(e.microbials||'—')+'</span></td><td>'+esc((e.stores||[]).join(', '))+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="viewEntry(\''+e.id+'\')">View</button>'+((!window.__CLOUD||canFile())?' <button class="btn sm sec" onclick="editEntry(\''+e.id+'\')">Edit</button> <button class="btn sm danger" onclick="delEntry(\''+e.id+'\')">Delete</button>':'')+(window.__CLOUD&&canFile()&&e.status==='draft'?' <button class="btn sm" onclick="publishEntry(\''+e.id+'\')">Publish</button>':'')+'</td></tr>'}).join('')||'<tr><td colspan="8" style="color:var(--mut)">No COAs match. Upload one above, or clear the filters.</td></tr>';
   $('resultCount').textContent='Showing '+filtered.length+' of '+catalog.length+' COAs';
 }
 ['q','qStore','qType','qStatus'].forEach(id=>{$(id).addEventListener('input',render);$(id).addEventListener('change',render)});
@@ -468,12 +597,16 @@ $('expCsv').addEventListener('click',()=>{
   const cell=v=>'"'+(Array.isArray(v)?v.join('; '):(v||'')).toString().replace(/"/g,'""')+'"';
   download('coa-catalog.csv',cols.join(',')+'\n'+catalog.map(e=>cols.map(c=>cell(e[c])).join(',')).join('\n'),'text/csv');
 });
-$('impInput').addEventListener('change',async()=>{const f=$('impInput').files[0];if(!f)return;try{const data=JSON.parse(await f.text());const entries=data.entries||data;if(!Array.isArray(entries))throw new Error('No entries array');let n=0;for(const e of entries){if(!catalog.some(x=>x.id===e.id)){catalog.push(e);n++}}saveCatalog();showMsg('Imported '+n+' new entr'+(n===1?'y':'ies')+' from “'+esc(f.name)+'”.','info')}catch(err){showMsg('Import failed: '+esc(err.message),'err')}});
+$('impInput').addEventListener('change',async()=>{const f=$('impInput').files[0];if(!f)return;try{const data=JSON.parse(await f.text());const entries=data.entries||data;if(!Array.isArray(entries))throw new Error('No entries array');
+  if(window.__CLOUD){ if(!canFile()){ showMsg('Your role cannot import.','err'); return; } let n=0;
+    for(const e of entries){ const doc=Object.assign({},e); doc.id=e.id||uid(); doc.status='draft'; doc.sample=false; doc.createdBy=currentUser.email; doc.updatedBy=currentUser.email; doc.storagePath=''; delete doc.filePath; await fbDb.collection('coas').doc(doc.id).set(doc,{merge:true}); n++; }
+    showMsg('Imported '+n+' entr'+(n===1?'y':'ies')+' into the cloud vault as <b>Drafts</b> from “'+esc(f.name)+'”. Attach their PDFs (Account section), verify each one, then Publish.','info'); return; }
+  let n=0;for(const e of entries){if(!catalog.some(x=>x.id===e.id)){catalog.push(e);n++}}saveCatalog();showMsg('Imported '+n+' new entr'+(n===1?'y':'ies')+' from “'+esc(f.name)+'”.','info')}catch(err){showMsg('Import failed: '+esc(err.message),'err')}});
 $('clearSamples').addEventListener('click',()=>{const before=catalog.length;catalog=catalog.filter(e=>!e.sample);saveCatalog();showMsg('Removed '+(before-catalog.length)+' SAMPLE entries.','info')});
 
 // ---------- Boot ----------
 render();
-loadShared().then(render);
+if(!fbInit()){ loadShared().then(render); }
 </script>
 </body>
 </html>
