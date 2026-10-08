@@ -46,6 +46,10 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
     <div id="cloudTools" class="hidden">
       <label>Attach PDFs to entries missing files (bulk — matched by file name)</label>
       <input type="file" id="attachInput" accept="application/pdf,.pdf" multiple>
+      <div style="margin-top:12px">
+        <button class="btn" id="publishAllBtn" type="button">Publish all Drafts</button>
+        <p class="hint">Bulk action: publishes <b>every</b> Draft at once, skipping the per-COA visual verification. Use only for a whole batch you intend to publish wholesale — see the staff guide.</p>
+      </div>
     </div>
   </div>
   <p class="hint" style="margin-top:8px">Local Demo mode stores everything in this browser only. Cloud mode (signed in with an authorized account) stores the catalog in Firestore and PDFs in Cloud Storage, with a Draft → human verify → Publish workflow. Viewers only ever see Published COAs.</p>
@@ -321,6 +325,25 @@ $('attachInput') && $('attachInput').addEventListener('change', async ()=>{
   }
   $('attachInput').value='';
   showMsg('Attached '+done+' PDF(s) to their catalog entries.'+(skipped.length?' Skipped (no entry with a matching file name, or upload error): '+esc(skipped.join(', ')):''), skipped.length?'warn':'info');
+});
+$('publishAllBtn') && $('publishAllBtn').addEventListener('click', async ()=>{
+  if(!window.__CLOUD || !canFile()){ showMsg('Bulk publish is a cloud feature for filers/admins.','err'); return; }
+  const drafts=catalog.filter(e=>e.status==='draft');
+  if(!drafts.length){ showMsg('No Drafts to publish.','info'); return; }
+  const isRd=e=>{ const t=(e.notes||'')+' '+(e.productName||''); return t.includes('R&D')||t.includes('Not for Sale')||t.includes('Not Valid for Transfer'); };
+  const isFail=e=>[e.pesticides,e.heavyMetals,e.microbials].some(v=>String(v||'').startsWith('Fail'));
+  const nRd=drafts.filter(isRd).length, nFail=drafts.filter(isFail).length, nNoPdf=drafts.filter(e=>!e.storagePath).length;
+  const ok=confirm('Publish ALL '+drafts.length+' Draft entries so every authorized user can see them?\n\nIncludes: '+nRd+' entries flagged R&D / not-for-sale, '+nFail+' entries with a FAIL safety panel, '+nNoPdf+' entries with no PDF attached.\n\nNormally each COA is visually verified before publishing. Only continue if you intend to publish this whole batch at once.');
+  if(!ok) return;
+  try{
+    const data={status:'published',verifiedBy:currentUser.email,verifiedAt:todayISO(),updatedBy:currentUser.email};
+    for(let i=0;i<drafts.length;i+=500){
+      const batch=fbDb.batch();
+      drafts.slice(i,i+500).forEach(e=>batch.update(fbDb.collection('coas').doc(e.id),data));
+      await batch.commit();
+    }
+    showMsg('✅ Published '+drafts.length+' Draft entries. All authorized users can now see them.','info');
+  }catch(err){ showMsg('Bulk publish failed: '+esc(err.message),'err') }
 });
 
 // ---------- PDF auto-extract ----------

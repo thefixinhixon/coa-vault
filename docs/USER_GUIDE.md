@@ -27,6 +27,20 @@ Filters help if there are many results: narrow by Store, Type, or Status.
 File it only once — update the existing entry (Edit) to add another store
 instead of creating a second copy.
 
+## Publishing in bulk — "Publish all Drafts" (filers / admins)
+
+Normally every COA is published one at a time, after someone has visually
+verified its details against the PDF (the **Publish** button on each Draft
+asks for that check). The **Publish all Drafts** button in the **Account**
+section is the exception: it publishes *every* Draft in the vault in one
+go. Before anything happens it shows a single confirmation that counts
+how many of the Drafts are flagged R&D / not-for-sale, how many have a
+FAIL safety panel, and how many have no PDF attached — read those numbers
+before you confirm. Every entry is stamped with your email as the
+verifier. Use it only when you deliberately intend to publish a whole
+batch at once, e.g. an initial bulk load of already-reviewed COAs. For
+day-to-day filing, stick to verifying and publishing each COA on its own.
+
 ## Status badges
 
 - **Valid** — expiration is more than 30 days out
