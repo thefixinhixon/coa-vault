@@ -30,6 +30,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:9px 8px;b
 .banner{padding:11px 13px;border-radius:10px;margin-bottom:12px;font-size:14px}.banner.warn{background:var(--amberbg);color:#7a2e0e;border:1px solid #fedf89}.banner.info{background:#eff8ff;color:#175cd3;border:1px solid #b2ddff}.banner.err{background:var(--redbg);color:var(--red);border:1px solid #fecdca}
 .hidden{display:none!important}.queueItem{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px;background:#fbfcfb;font-size:14px}
 dialog{border:0;border-radius:14px;max-width:860px;width:94%;padding:0}dialog .inner{padding:20px}dialog::backdrop{background:rgba(0,0,0,.5)}
+.modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}.modalBox{background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:560px;width:100%;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,.25)}.modalBox h3{margin:0 0 10px;font-size:18px}.modalBody{white-space:pre-line;font-size:14px;margin:0 0 16px}.modalBtns{display:flex;gap:10px;justify-content:flex-end}
 footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 .kbd{background:#eee;border-radius:4px;padding:1px 5px;font-size:12px}
 </style>
@@ -164,6 +165,8 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 
 <dialog id="viewDlg"><div class="inner"><div class="row" style="justify-content:space-between"><h3 id="vTitle" style="margin:0">COA</h3><button class="btn sec sm" onclick="document.getElementById('viewDlg').close()">Close</button></div><div id="vBody" style="margin-top:12px"></div></div></dialog>
 
+<div id="confirmModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle"><div class="modalBox"><h3 id="confirmTitle"></h3><p class="modalBody" id="confirmBody"></p><div class="modalBtns"><button class="btn sec" id="confirmCancelBtn" type="button">Cancel</button><button class="btn" id="confirmOkBtn" type="button">Publish</button></div></div></div>
+
 <script>
 // ---------- Utilities ----------
 const $=id=>document.getElementById(id);
@@ -174,6 +177,34 @@ function daysUntil(dateStr){if(!dateStr)return null;const d=new Date(dateStr+'T1
 function statusOf(e){const d=daysUntil(e.expirationDate);if(d===null)return{key:'valid',label:'No expiry date',cls:'grey'};if(d<0)return{key:'expired',label:'Expired '+Math.abs(d)+'d ago',cls:'bad'};if(d<=30)return{key:'soon',label:'Expires in '+d+'d',cls:'warn'};return{key:'valid',label:'Valid',cls:'ok'}}
 function showMsg(html,cls='info'){ $('msg').innerHTML='<div class="banner '+cls+'">'+html+'</div>'; window.scrollTo({top:0,behavior:'smooth'}) }
 function download(name,text,type='application/json'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+
+// ---------- In-page confirmation modal ----------
+// Replaces native confirm() in the publish flows. confirmDialog({title,
+// body, confirmLabel}) returns a Promise<boolean>: true when the confirm
+// button is clicked, false on Cancel or Escape. The body is set as text
+// and rendered with white-space:pre-line, so line breaks are preserved.
+let confirmResolve=null;
+function confirmFinish(val){
+  $('confirmModal').classList.add('hidden');
+  document.removeEventListener('keydown',confirmKeydown);
+  const r=confirmResolve; confirmResolve=null;
+  if(r) r(val);
+}
+function confirmKeydown(ev){ if(ev.key==='Escape') confirmFinish(false); }
+function confirmDialog({title,body,confirmLabel}){
+  return new Promise(resolve=>{
+    if(confirmResolve) confirmFinish(false);
+    confirmResolve=resolve;
+    $('confirmTitle').textContent=title;
+    $('confirmBody').textContent=body;
+    $('confirmOkBtn').textContent=confirmLabel||'OK';
+    $('confirmModal').classList.remove('hidden');
+    document.addEventListener('keydown',confirmKeydown);
+    $('confirmCancelBtn').focus();
+  });
+}
+$('confirmOkBtn').addEventListener('click',()=>confirmFinish(true));
+$('confirmCancelBtn').addEventListener('click',()=>confirmFinish(false));
 
 // ---------- IndexedDB for PDF blobs ----------
 let dbPromise=null;
@@ -293,7 +324,7 @@ window.removeUser=async function(email){
 window.publishEntry=async function(id){
   const e=catalog.find(x=>x.id===id); if(!e||!window.__CLOUD) return;
   if(!canFile()){ showMsg('Your role cannot publish.','err'); return; }
-  const ok=confirm('PUBLISH this COA — only do this after VISUALLY VERIFYING these details against the PDF itself:\n\nProduct: '+e.productName+'\nBatch/Lot: '+e.batchLot+'\nLab: '+(e.lab||'—')+' · Sample: '+(e.sampleId||'—')+'\nTest date: '+(e.testDate||'—')+' · THC: '+(e.totalThcPercent||'—')+'% · CBD: '+(e.totalCbdPercent||'—')+'%\nPesticides: '+(e.pesticides||'—')+' · Heavy metals: '+(e.heavyMetals||'—')+' · Microbials: '+(e.microbials||'—')+'\n\nPublish now so all authorized users can see it?');
+  const ok=await confirmDialog({title:'Publish COA',confirmLabel:'Publish',body:'PUBLISH this COA — only do this after VISUALLY VERIFYING these details against the PDF itself:\n\nProduct: '+e.productName+'\nBatch/Lot: '+e.batchLot+'\nLab: '+(e.lab||'—')+' · Sample: '+(e.sampleId||'—')+'\nTest date: '+(e.testDate||'—')+' · THC: '+(e.totalThcPercent||'—')+'% · CBD: '+(e.totalCbdPercent||'—')+'%\nPesticides: '+(e.pesticides||'—')+' · Heavy metals: '+(e.heavyMetals||'—')+' · Microbials: '+(e.microbials||'—')+'\n\nPublish now so all authorized users can see it?'});
   if(!ok) return;
   try{ await fbDb.collection('coas').doc(id).update({status:'published',verifiedBy:currentUser.email,verifiedAt:todayISO(),updatedBy:currentUser.email}); showMsg('✅ Published “'+esc(e.productName)+'”. All authorized users can now see it.','info'); }
   catch(err){ showMsg('Publish failed: '+esc(err.message),'err') }
@@ -333,7 +364,7 @@ $('publishAllBtn') && $('publishAllBtn').addEventListener('click', async ()=>{
   const isRd=e=>{ const t=(e.notes||'')+' '+(e.productName||''); return t.includes('R&D')||t.includes('Not for Sale')||t.includes('Not Valid for Transfer'); };
   const isFail=e=>[e.pesticides,e.heavyMetals,e.microbials].some(v=>String(v||'').startsWith('Fail'));
   const nRd=drafts.filter(isRd).length, nFail=drafts.filter(isFail).length, nNoPdf=drafts.filter(e=>!e.storagePath).length;
-  const ok=confirm('Publish ALL '+drafts.length+' Draft entries so every authorized user can see them?\n\nIncludes: '+nRd+' entries flagged R&D / not-for-sale, '+nFail+' entries with a FAIL safety panel, '+nNoPdf+' entries with no PDF attached.\n\nNormally each COA is visually verified before publishing. Only continue if you intend to publish this whole batch at once.');
+  const ok=await confirmDialog({title:'Publish all Drafts',confirmLabel:'Publish all',body:'Publish ALL '+drafts.length+' Draft entries so every authorized user can see them?\n\nIncludes: '+nRd+' entries flagged R&D / not-for-sale, '+nFail+' entries with a FAIL safety panel, '+nNoPdf+' entries with no PDF attached.\n\nNormally each COA is visually verified before publishing. Only continue if you intend to publish this whole batch at once.'});
   if(!ok) return;
   try{
     const data={status:'published',verifiedBy:currentUser.email,verifiedAt:todayISO(),updatedBy:currentUser.email};
