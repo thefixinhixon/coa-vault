@@ -197,3 +197,6 @@ verify → publish.
 | Storage rules won't publish / compile error | Use the FALLBACK block at the bottom of `storage.rules` (Step 5). |
 | A new COA doesn't show up for other staff | It's still a **draft**. Open it, verify it, and click **Publish** — viewers only ever see published entries. |
 | PDFs won't open, but catalog entries show | Storage isn't enabled, the Blaze upgrade is incomplete, or the storage rules weren't published (Step 5). |
+
+
+> **Note (Manage Users panel):** the console steps for the `access` collection are only needed ONCE, to create the first admin (the owner). After that, admins add, re-role, deactivate, and remove users from inside the app — sign in as an admin and use the **Manage Users** panel. Nobody else ever needs the Firebase console.

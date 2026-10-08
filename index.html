@@ -53,6 +53,19 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 
 <div id="msg"></div>
 
+<section class="card hidden" id="usersCard">
+  <h2>Manage Users <span class="badge grey">admin only</span></h2>
+  <p class="hint">People on this list can sign in with Google. <b>viewer</b> = search &amp; print Published COAs only · <b>filer</b> = also upload, verify &amp; publish · <b>admin</b> = everything, plus manage this list. Changes apply the next time that person loads the vault (a refresh is enough). Emails must match the Google account they sign in with, exactly.</p>
+  <form id="addUserForm">
+    <div class="row">
+      <div><label>Email address</label><input type="email" id="nu_email" placeholder="person@example.com" required></div>
+      <div><label>Role</label><select id="nu_role"><option value="viewer">viewer</option><option value="filer">filer</option><option value="admin">admin</option></select></div>
+      <div style="align-self:end"><button class="btn" type="submit">Add user</button></div>
+    </div>
+  </form>
+  <div id="usersList" style="margin-top:10px"></div>
+</section>
+
 <section class="stats">
   <div class="stat"><b id="stTotal">0</b><span>Total COAs filed</span></div>
   <div class="stat"><b id="stValid">0</b><span>Valid</span></div>
@@ -211,6 +224,7 @@ function updateAuthUI(){
   else { st.innerHTML='<b>Signed in as '+esc(currentUser.email)+'</b> but this email is <b>not authorized</b> yet. Ask the vault admin to add your email in Firestore → access (see docs/FIREBASE_SETUP.md).'; }
   $('cloudTools').classList.toggle('hidden', !canFile());
   $('clearSamples').classList.toggle('hidden', !!window.__CLOUD);
+  $('usersCard').classList.toggle('hidden', !(window.__CLOUD && currentRole==='admin'));
 }
 function fbInit(){
   if(!fbReady()){ updateAuthUI(); return false; }
@@ -228,14 +242,50 @@ function fbInit(){
         const snap=await fbDb.collection('access').doc((user.email||'').toLowerCase()).get();
         if(snap.exists && snap.data().active!==false) currentRole=snap.data().role||null;
       }catch(err){ /* rules may deny until access doc exists */ }
-      if(currentRole){ catalog=[]; startCloudListener(); }
-      else { catalog=[]; render(); }
-    } else { catalog=[]; render(); }
+      if(currentRole){ catalog=[]; startCloudListener(); if(currentRole==='admin') startAccessListener(); else stopAccessListener(); }
+      else { catalog=[]; stopAccessListener(); render(); }
+    } else { catalog=[]; stopAccessListener(); render(); }
     updateAuthUI();
   });
   updateAuthUI();
   return true;
 }
+// ---------- Manage Users (admin) ----------
+let unsubAccess=null, accessUsers=[];
+function startAccessListener(){
+  if(unsubAccess || !fbDb) return;
+  unsubAccess=fbDb.collection('access').onSnapshot(snap=>{
+    accessUsers=snap.docs.map(d=>Object.assign({email:d.id},d.data()));
+    accessUsers.sort((a,b)=>a.email.localeCompare(b.email));
+    renderUsers();
+  },err=>{ $('usersList').innerHTML='<div class="banner err">Could not load users: '+esc(err.message)+'</div>' });
+}
+function stopAccessListener(){ if(unsubAccess){unsubAccess(); unsubAccess=null} }
+function renderUsers(){
+  const me=(currentUser&&currentUser.email||'').toLowerCase();
+  $('usersList').innerHTML='<table><thead><tr><th>Email</th><th>Role</th><th>Active</th><th></th></tr></thead><tbody>'+
+    accessUsers.map(u=>{
+      const isMe=u.email.toLowerCase()===me;
+      return '<tr><td>'+esc(u.email)+(isMe?' <span class="badge grey">you</span>':'')+'</td>'+
+      '<td><select onchange="setUserRole(\''+esc(u.email)+'\',this.value)" '+(isMe?'disabled title="You cannot change your own role"':'')+'>'+
+        ['viewer','filer','admin'].map(r=>'<option value="'+r+'"'+(u.role===r?' selected':'')+'>'+r+'</option>').join('')+'</select></td>'+
+      '<td><input type="checkbox" '+(u.active!==false?'checked':'')+' onchange="setUserActive(\''+esc(u.email)+'\',this.checked)" '+(isMe?'disabled title="You cannot deactivate yourself"':'')+'></td>'+
+      '<td>'+(isMe?'':'<button class="btn sm danger" onclick="removeUser(\''+esc(u.email)+'\')">Remove</button>')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+window.setUserRole=async function(email,role){
+  try{ await fbDb.collection('access').doc(email).set({role:role},{merge:true}); showMsg('Role for '+esc(email)+' set to '+esc(role)+'.','info'); }
+  catch(err){ showMsg('Could not change role: '+esc(err.message),'err'); renderUsers(); }
+};
+window.setUserActive=async function(email,active){
+  try{ await fbDb.collection('access').doc(email).set({active:!!active},{merge:true}); showMsg(esc(email)+(active?' activated.':' deactivated — they keep their account but lose vault access on next load.'),'info'); }
+  catch(err){ showMsg('Could not update user: '+esc(err.message),'err'); renderUsers(); }
+};
+window.removeUser=async function(email){
+  if(!confirm('Remove '+email+' from the vault allowlist? They will lose access on their next page load.'))return;
+  try{ await fbDb.collection('access').doc(email).delete(); showMsg('Removed '+esc(email)+'.','info'); }
+  catch(err){ showMsg('Could not remove user: '+esc(err.message),'err') }
+};
 window.publishEntry=async function(id){
   const e=catalog.find(x=>x.id===id); if(!e||!window.__CLOUD) return;
   if(!canFile()){ showMsg('Your role cannot publish.','err'); return; }
@@ -244,6 +294,16 @@ window.publishEntry=async function(id){
   try{ await fbDb.collection('coas').doc(id).update({status:'published',verifiedBy:currentUser.email,verifiedAt:todayISO(),updatedBy:currentUser.email}); showMsg('✅ Published “'+esc(e.productName)+'”. All authorized users can now see it.','info'); }
   catch(err){ showMsg('Publish failed: '+esc(err.message),'err') }
 };
+const auf=$('addUserForm');
+if(auf) auf.addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  const email=$('nu_email').value.trim().toLowerCase(); const role=$('nu_role').value;
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showMsg('That does not look like an email address.','err'); return; }
+  if(accessUsers.some(u=>u.email.toLowerCase()===email)){ showMsg(esc(email)+' is already on the list — change their role in the table instead.','warn'); return; }
+  try{ await fbDb.collection('access').doc(email).set({role:role,active:true});
+    $('nu_email').value=''; showMsg('✅ Added '+esc(email)+' as '+esc(role)+'. Send them the vault link and have them sign in with Google using that exact email.','info'); }
+  catch(err){ showMsg('Could not add user: '+esc(err.message),'err') }
+});
 $('attachInput') && $('attachInput').addEventListener('change', async ()=>{
   const files=[...$('attachInput').files]; if(!files.length) return;
   if(!window.__CLOUD || !canFile()){ showMsg('Bulk attach is a cloud feature for filers/admins.','err'); return; }

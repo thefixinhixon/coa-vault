@@ -118,14 +118,14 @@ service cloud.firestore {
 
     match /access/{email} {
 
-      // A user may read ONLY their own access document, so the app can learn
-      // its role after sign-in. Nobody reads anyone else's entry here
-      // (admins manage entries by writing known email addresses; they do not
-      // need read access to other entries for the app to function).
-      allow get: if signedIn() && userEmail() == email.lower();
+      // A user may read their OWN access document, so the app can learn its
+      // role after sign-in. Admins may additionally read and list the whole
+      // allowlist — that powers the app's Manage Users panel. Nobody else
+      // can see anyone else's entry.
+      allow get: if signedIn() && (userEmail() == email.lower() || isAdmin());
 
-      // No listing the allowlist from the client.
-      allow list: if false;
+      // Listing the allowlist is admin-only.
+      allow list: if isAdmin();
 
       // Only admins may create, update, or delete access documents.
       allow create, update: if isAdmin()

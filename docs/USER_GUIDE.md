@@ -42,3 +42,12 @@ instead of creating a second copy.
 - The barcode field is worth filling in — it's the fastest lookup at the counter.
 - The Missing-COA check (section 4) is a manager task: run it after a
   delivery against a fresh NMS2S inventory export.
+
+## Managing users (admins)
+
+Sign in as an admin and use the **Manage Users** panel (it only appears for admins):
+
+- **Add a user:** type the email of their Google account (exactly as they sign in with Google), choose a role, click **Add user**. Then send them the vault link — they click **Sign in with Google** and they're in. There is no invite email.
+- **Roles:** *viewer* — search & print Published COAs only. *filer* — also upload COAs, verify, and publish. *admin* — everything, plus manage users and delete any entry.
+- **Change or revoke access:** change the role in the table, untick **Active** to suspend someone without deleting them, or **Remove** to delete their entry entirely. Changes apply the next time that person loads the vault (a refresh is enough).
+- You cannot change your own role, deactivate, or remove yourself — that's deliberate, so an admin can't lock everyone out by accident. The very first admin is created once in the Firebase console (see FIREBASE_SETUP.md); after that, everything happens in this panel.
