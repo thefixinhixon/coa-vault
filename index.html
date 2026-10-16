@@ -36,7 +36,7 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 </style>
 </head>
 <body>
-<header><h1>🌿 COA Vault</h1><p>The Greenery Room — Certificates of Analysis for Ruidoso · Alto · Carrizozo &nbsp;|&nbsp; v2 — Firebase-ready (runs in Local Demo mode until firebase-config.js is filled in)</p></header>
+<header><h1>🌿 COA Vault</h1><p>The Greenery Room — Certificates of Analysis for Ruidoso · Alto · Carrizozo &nbsp;|&nbsp; v2.5 — Firebase-ready (runs in Local Demo mode until firebase-config.js is filled in)</p></header>
 <div class="wrap">
 
 <section class="card" id="authCard">
@@ -135,6 +135,10 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
     <div><label>Type</label><select id="qType"><option value="">All types</option><option>Flower</option><option>Edible</option><option>Vape</option><option>Concentrate</option><option>Pre-Roll</option><option>Tincture</option><option>Topical</option><option>Other</option></select></div>
     <div><label>Status</label><select id="qStatus"><option value="">Any status</option><option value="valid">Valid</option><option value="soon">Expiring ≤30d</option><option value="expired">Expired</option><option value="fail">Any Fail</option></select></div>
   </div>
+  <div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <label style="display:flex;gap:8px;align-items:center;font-weight:600;margin:0"><input type="checkbox" id="qStock" style="width:auto"> Currently in stock</label>
+    <span class="hint" id="stockInfo" style="margin:0"></span>
+  </div>
   <div style="overflow:auto;margin-top:14px"><table>
     <thead><tr><th>Product</th><th>Batch / Lot</th><th>THC</th><th>Expires</th><th>Status</th><th>Tests</th><th>Stores</th><th></th></tr></thead>
     <tbody id="results"></tbody>
@@ -143,10 +147,11 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 </section>
 
 <section class="card">
-  <h2>4. Missing-COA check (from NMS2S inventory)</h2>
-  <p class="hint">Upload the same NMS2S Current Inventory CSV the Label Generator uses. The app compares barcodes and product names against the vault and lists in-stock items with no COA on file. A demo file is in <span class="kbd">data/sample-inventory.csv</span>.</p>
-  <div class="row"><div><label>Inventory CSV</label><input type="file" id="invInput" accept=".csv,text/csv"></div><button class="btn sec" id="runMissing" type="button">Run check</button></div>
+  <h2>4. Inventory: stock status + Missing-COA check</h2>
+  <p class="hint">Upload the same NMS2S Current Inventory CSV the Label Generator uses (full export or the sanitized 8-column version both work). <b>Update stock status</b> matches the vault against products currently in stock at any location and powers the <b>Currently in stock</b> filter in Find a COA. Matching is by barcode, by a batch code printed in the product name, by exact product name, or — for two-strain blends — by component strain, and only when the brand lines up. Name and component matches are product-line matches, not proof that a specific package came from the tested lot. <b>Run check</b> lists in-stock items with no COA on file. A demo file is in <span class="kbd">data/sample-inventory.csv</span>.</p>
+  <div class="row"><div><label>Inventory CSV</label><input type="file" id="invInput" accept=".csv,text/csv"></div><button class="btn sec" id="runMissing" type="button">Run check</button><button class="btn" id="updateStockBtn" type="button">Update stock status…</button></div>
   <div id="missingOut" style="margin-top:12px"></div>
+  <div id="stockOut" style="margin-top:12px"></div>
 </section>
 
 <section class="card">
@@ -161,7 +166,7 @@ footer{color:var(--mut);font-size:12px;text-align:center;padding:18px}
 </section>
 
 </div>
-<footer>COA Vault v1 Prototype · The Greenery Room · Data in this browser + shared catalog at data/catalog.json · Always verify the PDF itself is the official COA before producing it.</footer>
+<footer>COA Vault v2.5 · The Greenery Room · Always verify the PDF itself is the official COA before producing it.</footer>
 
 <dialog id="viewDlg"><div class="inner"><div class="row" style="justify-content:space-between"><h3 id="vTitle" style="margin:0">COA</h3><button class="btn sec sm" onclick="document.getElementById('viewDlg').close()">Close</button></div><div id="vBody" style="margin-top:12px"></div></div></dialog>
 
@@ -657,7 +662,7 @@ window.delEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)retu
     try{ await fbDb.collection('coas').doc(id).delete(); if(e.storagePath){ try{await fbStore.ref().child(e.storagePath).delete()}catch(_){} } }catch(err){ showMsg('Delete failed: '+esc(err.message),'err') } return; }
   if(!confirm('Delete “'+e.productName+'” (Batch '+e.batchLot+') from the vault on this PC?'))return;catalog=catalog.filter(x=>x.id!==id);try{await idbDel(id)}catch(_){} saveCatalog();};
 window.viewEntry=async function(id){const e=catalog.find(x=>x.id===id);if(!e)return;$('vTitle').textContent=e.productName;
-  let html='<p><b>Batch/Lot:</b> '+esc(e.batchLot)+' &nbsp; <b>Brand:</b> '+esc(e.brand||'—')+' &nbsp; <b>Strain:</b> '+esc(e.strain||'—')+'<br><b>Lab:</b> '+esc(e.lab||'—')+' &nbsp; <b>Sample:</b> '+esc(e.sampleId||'—')+'<br><b>Test date:</b> '+esc(e.testDate||'—')+' &nbsp; <b>Expires:</b> '+esc(e.expirationDate||'—')+' ('+statusOf(e).label+')<br><b>THC:</b> '+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+' &nbsp; <b>CBD:</b> '+esc(e.totalCbdPercent?e.totalCbdPercent+'%':'—')+'<br><b>Pesticides:</b> '+esc(e.pesticides||'—')+' · <b>Heavy metals:</b> '+esc(e.heavyMetals||'—')+' · <b>Microbials:</b> '+esc(e.microbials||'—')+'<br><b>Stores:</b> '+esc((e.stores||[]).join(', '))+' &nbsp; <b>Barcode:</b> '+esc(e.barcode||'—')+'<br><b>Notes:</b> '+esc(e.notes||'—')+'</p>';
+  let html='<p><b>Batch/Lot:</b> '+esc(e.batchLot)+' &nbsp; <b>Brand:</b> '+esc(e.brand||'—')+' &nbsp; <b>Strain:</b> '+esc(e.strain||'—')+'<br><b>Lab:</b> '+esc(e.lab||'—')+' &nbsp; <b>Sample:</b> '+esc(e.sampleId||'—')+'<br><b>Test date:</b> '+esc(e.testDate||'—')+' &nbsp; <b>Expires:</b> '+esc(e.expirationDate||'—')+' ('+statusOf(e).label+')<br><b>THC:</b> '+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+' &nbsp; <b>CBD:</b> '+esc(e.totalCbdPercent?e.totalCbdPercent+'%':'—')+'<br><b>Pesticides:</b> '+esc(e.pesticides||'—')+' · <b>Heavy metals:</b> '+esc(e.heavyMetals||'—')+' · <b>Microbials:</b> '+esc(e.microbials||'—')+'<br><b>Stores:</b> '+esc((e.stores||[]).join(', '))+' &nbsp; <b>Barcode:</b> '+esc(e.barcode||'—')+(e.inStock?'<br><b>Currently in stock:</b> '+esc((e.stockLocations||[]).join(', '))+' — matched by '+esc(e.stockMatch||'name')+', inventory snapshot '+esc(e.stockSnapshot||''):'')+'<br><b>Notes:</b> '+esc(e.notes||'—')+'</p>';
   if(window.__CLOUD && e.storagePath){ try{ const url=await fbStore.ref().child(e.storagePath).getDownloadURL(); html+='<p><a class="btn" href="'+url+'" target="_blank" rel="noopener">Open / Print PDF</a></p><iframe src="'+url+'" style="width:100%;height:520px;border:1px solid #ddd;border-radius:8px"></iframe>'; $('vBody').innerHTML=html; $('viewDlg').showModal(); return; }catch(err){ html+='<div class="banner warn">Could not load the PDF from cloud storage ('+esc(err.message)+').</div>'; } }
   const blob=await idbGet(id).catch(()=>null);
   if(blob){const url=URL.createObjectURL(blob);html+='<p><a class="btn" href="'+url+'" target="_blank" rel="noopener">Open / Print PDF</a></p><iframe src="'+url+'" style="width:100%;height:520px;border:1px solid #ddd;border-radius:8px"></iframe>'}
@@ -672,21 +677,24 @@ function render(){
   $('stValid').textContent=catalog.filter(e=>statusOf(e).key==='valid').length;
   $('stSoon').textContent=catalog.filter(e=>statusOf(e).key==='soon').length;
   $('stExpired').textContent=catalog.filter(e=>statusOf(e).key==='expired').length;
-  const q=norm($('q').value), store=$('qStore').value, type=$('qType').value, stat=$('qStatus').value;
+  const q=norm($('q').value), store=$('qStore').value, type=$('qType').value, stat=$('qStatus').value, stockOnly=$('qStock').checked;
+  const snapDates=catalog.map(e=>e.stockSnapshot||'').filter(Boolean).sort();
+  $('stockInfo').textContent=snapDates.length?('Stock snapshot: '+snapDates[snapDates.length-1]+' · '+catalog.filter(e=>e.inStock).length+' COAs matched to in-stock products'):'No stock snapshot yet — load an inventory CSV in section 4 and use Update stock status.';
   const filtered=catalog.filter(e=>{
     const hay=norm([e.productName,e.brand,e.strain,e.batchLot,e.barcode,e.lab,e.sampleId].join(' '));
     if(q && !hay.includes(q))return false;
     if(store && !(e.stores||[]).includes(store))return false;
+    if(stockOnly && !e.inStock)return false;
     if(type && e.productType!==type)return false;
     if(stat==='fail' && ![e.pesticides,e.heavyMetals,e.microbials].includes('Fail'))return false;
     if(stat && stat!=='fail' && statusOf(e).key!==stat)return false;
     return true;
   }).sort((a,b)=>(a.expirationDate||'9999').localeCompare(b.expirationDate||'9999'));
   $('results').innerHTML=filtered.map(e=>{const s=statusOf(e);const fails=[e.pesticides,e.heavyMetals,e.microbials].includes('Fail');
-    return '<tr><td><b>'+esc(e.productName)+'</b>'+(e.sample?' <span class="badge grey">SAMPLE</span>':'')+(window.__CLOUD?(e.status==='draft'?' <span class="badge warn">DRAFT — not yet published</span>':' <span class="badge ok">PUBLISHED</span>'):'')+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.brand||'')+(e.strain?' · '+esc(e.strain):'')+' · '+esc(e.productType||'')+'</span></td><td>'+esc(e.batchLot)+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.barcode||'')+'</span></td><td>'+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+'</td><td>'+esc(e.expirationDate||'—')+'</td><td><span class="badge '+s.cls+'">'+s.label+'</span></td><td>'+(fails?'<span class="badge bad">FAIL</span>':'<span class="badge ok">Pass</span>')+'<br><span style="font-size:12px;color:var(--mut)">P:'+esc(e.pesticides||'—')+' H:'+esc(e.heavyMetals||'—')+' M:'+esc(e.microbials||'—')+'</span></td><td>'+esc((e.stores||[]).join(', '))+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="viewEntry(\''+e.id+'\')">View</button>'+((!window.__CLOUD||canFile())?' <button class="btn sm sec" onclick="editEntry(\''+e.id+'\')">Edit</button> <button class="btn sm danger" onclick="delEntry(\''+e.id+'\')">Delete</button>':'')+(window.__CLOUD&&canFile()&&e.status==='draft'?' <button class="btn sm" onclick="publishEntry(\''+e.id+'\')">Publish</button>':'')+'</td></tr>'}).join('')||'<tr><td colspan="8" style="color:var(--mut)">No COAs match. Upload one above, or clear the filters.</td></tr>';
+    return '<tr><td><b>'+esc(e.productName)+'</b>'+(e.sample?' <span class="badge grey">SAMPLE</span>':'')+(e.inStock?' <span class="badge ok">IN STOCK</span>':'')+(window.__CLOUD?(e.status==='draft'?' <span class="badge warn">DRAFT — not yet published</span>':' <span class="badge ok">PUBLISHED</span>'):'')+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.brand||'')+(e.strain?' · '+esc(e.strain):'')+' · '+esc(e.productType||'')+(e.inStock?'<br>In stock at: '+esc((e.stockLocations||[]).join(', '))+' (matched by '+esc(e.stockMatch||'name')+', snapshot '+esc(e.stockSnapshot||'')+')':'')+'</span></td><td>'+esc(e.batchLot)+'<br><span style="color:var(--mut);font-size:12px">'+esc(e.barcode||'')+'</span></td><td>'+esc(e.totalThcPercent?e.totalThcPercent+'%':'—')+'</td><td>'+esc(e.expirationDate||'—')+'</td><td><span class="badge '+s.cls+'">'+s.label+'</span></td><td>'+(fails?'<span class="badge bad">FAIL</span>':'<span class="badge ok">Pass</span>')+'<br><span style="font-size:12px;color:var(--mut)">P:'+esc(e.pesticides||'—')+' H:'+esc(e.heavyMetals||'—')+' M:'+esc(e.microbials||'—')+'</span></td><td>'+esc((e.stores||[]).join(', '))+'</td><td style="white-space:nowrap"><button class="btn sm" onclick="viewEntry(\''+e.id+'\')">View</button>'+((!window.__CLOUD||canFile())?' <button class="btn sm sec" onclick="editEntry(\''+e.id+'\')">Edit</button> <button class="btn sm danger" onclick="delEntry(\''+e.id+'\')">Delete</button>':'')+(window.__CLOUD&&canFile()&&e.status==='draft'?' <button class="btn sm" onclick="publishEntry(\''+e.id+'\')">Publish</button>':'')+'</td></tr>'}).join('')||'<tr><td colspan="8" style="color:var(--mut)">No COAs match. Upload one above, or clear the filters.</td></tr>';
   $('resultCount').textContent='Showing '+filtered.length+' of '+catalog.length+' COAs';
 }
-['q','qStore','qType','qStatus'].forEach(id=>{$(id).addEventListener('input',render);$(id).addEventListener('change',render)});
+['q','qStore','qType','qStatus','qStock'].forEach(id=>{$(id).addEventListener('input',render);$(id).addEventListener('change',render)});
 
 // ---------- Missing COA check ----------
 let invRows=[];
@@ -697,8 +705,9 @@ function parseCSV(text){
   for(let i=0;i<s.length;i++){const c=s[i];if(inQ){if(c==='"'){if(s[i+1]==='"'){cur+='"';i++}else inQ=false}else cur+=c}else if(c==='"')inQ=true;else if(c===','){row.push(cur);cur=''}else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur=''}else cur+=c}
   if(cur||row.length){row.push(cur);rows.push(row)}
   const header=rows[0].map(h=>h.trim()); const idx=n=>header.indexOf(n);
+  const get=(r,n)=>{const i=idx(n);return i>=0?(r[i]||''):''};
   const out=[];
-  for(let i=1;i<rows.length;i++){const r=rows[i];if(!r.length||!r.join('').trim())continue;out.push({productName:r[idx('productName')]||r[1]||'',barcode:r[idx('barCode')]||r[idx('barcode')]||'',location:r[idx('locationDisplay')]||''})}
+  for(let i=1;i<rows.length;i++){const r=rows[i];if(!r.length||!r.join('').trim())continue;out.push({productName:get(r,'productName')||r[1]||'',barcode:get(r,'barCode')||get(r,'barcode')||'',location:get(r,'locationDisplay')||'',strainName:get(r,'strainName'),productTypeName:get(r,'productTypeName'),packages:get(r,'packages'),remainingWeight:get(r,'remainingWeight')})}
   return out;
 }
 $('runMissing').addEventListener('click',()=>{
@@ -709,6 +718,104 @@ $('runMissing').addEventListener('click',()=>{
     return true;
   });
   $('missingOut').innerHTML=(missing.length?'<div class="banner warn"><b>'+missing.length+' in-stock item(s) have NO COA on file:</b></div><table><thead><tr><th>Product</th><th>Barcode</th><th>Location</th></tr></thead><tbody>'+missing.map(r=>'<tr><td>'+esc(r.productName)+'</td><td>'+esc(r.barcode)+'</td><td>'+esc(r.location)+'</td></tr>').join('')+'</tbody></table>':'<div class="banner info">✅ Every inventory row matched a COA in the vault (by barcode or product name).</div>');
+});
+
+// ---------- Stock status (powers the "Currently in stock" filter) ----------
+// Matching philosophy: precision over recall. A COA is marked in stock only
+// when an in-stock inventory product matches it by (1) exact barcode,
+// (2) a batch code printed in the inventory product name (e.g. Wyld "RB B46"),
+// (3) exact cleaned product name, (4) exact strain when every vault entry for
+// that strain belongs to one brand, or (5) for two-strain blends ("A x B"),
+// a component strain on an entry of the SAME brand the inventory name
+// carries. Strain-type conflicts (Indica vs Hybrid, etc.) reject a match.
+const FORM_WORDS=new Set(['sample','coa','pdf','the','a','an','pack','package','packaged','disposable','disposables','cart','carts','cartridge','cartridges','vape','vaporizer','concentrate','volatile','solvent','solid','orally','consumed','product','products','cannabis','flower','edible','edibles','gummy','gummies','infused','preroll','pre','roll','rolls','live','resin','switch','dual','chamber','function','deli','style','bulk','smalls','distro','enterprises','llc','nm','new','mexico','aio','doobie','joint','fat','eighths','gram','grams']);
+const TYPE_WORDS=new Set(['indica','sativa','hybrid']);
+const BRAND_STOP=new Set(['turnt','up','wyld','anchored','tarot']);
+function stockToks(s){ return (s||'').toString().toLowerCase().replace(/[^a-z0-9]+/g,' ').split(' ').filter(t=>t && !FORM_WORDS.has(t) && !/^\d+(\.\d+)?(g|mg|ml|ct|pk)?$/.test(t) && !/^\d+$/.test(t)); }
+function editDist(a,b){ const m=a.length,n=b.length; const d=Array.from({length:m+1},(_,i)=>[i,...Array(n).fill(0)]); for(let j=0;j<=n;j++)d[0][j]=j; for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1)); return d[m][n]; }
+function tokSim(a,b){ if(a===b)return true; const mx=Math.max(a.length,b.length); return mx>3 && (1-editDist(a,b)/mx)>=0.8; }
+function setEq(a,b){ a=new Set(a); b=[...b]; if(a.size!==b.length)return false; for(const x of a){ const i=b.findIndex(y=>tokSim(x,y)); if(i<0)return false; b.splice(i,1);} return true; }
+function setSubsetExtra(a,b,allowed){ b=[...b]; for(const x of new Set(a)){ const i=b.findIndex(y=>tokSim(x,y)); if(i<0)return false; b.splice(i,1);} return b.every(y=>allowed.includes(y)); }
+function typeConflict(a,b){ const ta=new Set([...a].filter(t=>TYPE_WORDS.has(t))), tb=new Set([...b].filter(t=>TYPE_WORDS.has(t))); return ta.size&&tb.size&&[...ta].join()!==[...tb].join(); }
+function brandInName(brandToks,rawToks){ if(!brandToks.length)return false; const hits=brandToks.filter(t=>rawToks.some(x=>tokSim(t,x))).length; return hits>=Math.max(1,Math.round(brandToks.length*0.6)); }
+function storeNameOf(loc){ for(const s of ['Ruidoso','Alto','Carrizozo']) if((loc||'').toLowerCase().includes(s.toLowerCase())) return s; return (loc||'').trim(); }
+function rowInStock(r){ const hasP=r.packages!=='' && r.packages!=null && !isNaN(parseFloat(r.packages)), hasW=r.remainingWeight!=='' && r.remainingWeight!=null && !isNaN(parseFloat(r.remainingWeight)); if(hasP||hasW) return (hasP&&parseFloat(r.packages)>0)||(hasW&&parseFloat(r.remainingWeight)>0); return true; }
+function computeStockMatches(){
+  const prods=new Map();
+  for(const r of invRows){ if(!rowInStock(r))continue; const key=norm(r.productName); if(!key)continue;
+    if(!prods.has(key)) prods.set(key,{name:r.productName,barcodes:new Set(),locations:new Set()});
+    const p=prods.get(key); if(r.barcode)p.barcodes.add(r.barcode); const st=storeNameOf(r.location); if(st)p.locations.add(st); }
+  const ents=catalog.map(e=>({e,btoks:stockToks(e.brand||''),ptoks:new Set(stockToks(e.productName||'')),stoks:new Set(stockToks(e.strain||'')),batch:norm(e.batchLot||'')}));
+  const brandList=[...new Map(ents.filter(x=>x.btoks.length).map(x=>[norm(x.e.brand),x.btoks])).entries()];
+  const invBrand=rawToks=>{ for(const [bname,bt] of brandList) if(brandInName(bt,rawToks)) return bname; return ''; };
+  const matches=new Map(); // entryId -> {method, locations:Set, product}
+  const addMatch=(ent,method,p)=>{ const cur=matches.get(ent.e.id); if(cur){ p.locations.forEach(l=>cur.locations.add(l)); } else matches.set(ent.e.id,{method,locations:new Set(p.locations),product:p.name,entry:ent.e}); };
+  for(const p of prods.values()){
+    const raw=stockToks(p.name), rawSet=new Set(raw), nn=norm(p.name); let hits=[];
+    for(const x of ents) if(x.e.barcode && p.barcodes.has(x.e.barcode)) hits.push([x,'barcode']);
+    if(!hits.length) for(const x of ents){ const b=x.batch; if(b && /\d/.test(b) && b.length>=4 && nn.includes(b)) hits.push([x,'batch']); }
+    if(!hits.length){
+      const ib=invBrand(raw);
+      for(const x of ents){
+        if(typeConflict(rawSet,x.ptoks)||typeConflict(rawSet,x.stoks)) continue;
+        if(setEq(rawSet,x.ptoks)){ hits.push([x,'name']); continue; }
+        if(x.stoks.size && setEq(rawSet,x.stoks)){
+          if(ib && norm(x.e.brand)===ib){ hits.push([x,'name']); continue; }
+          const same=ents.filter(y=>y.stoks.size && setEq(y.stoks,x.stoks));
+          if(new Set(same.map(y=>norm(y.e.brand))).size<=1) hits.push([x,'name']);
+        }
+      }
+    }
+    if(!hits.length && /\sx\s/.test(' '+nn+' ')){
+      const ib=invBrand(raw);
+      if(ib){
+        for(const part of nn.split(/\s+x\s+/)){
+          const ct=new Set(stockToks(part).filter(t=>!BRAND_STOP.has(t)));
+          if(!ct.size || (ct.size===1 && ct.has('mixed'))) continue;
+          for(const x of ents){
+            if(norm(x.e.brand)!==ib) continue;
+            if(typeConflict(ct,x.stoks)) continue;
+            const core=new Set([...x.ptoks].filter(t=>!x.btoks.includes(t)));
+            if(setEq(ct,x.stoks)||setEq(ct,core)||setSubsetExtra(ct,x.stoks,['cake','haze'])||setSubsetExtra(ct,core,['cake','haze'])) hits.push([x,'component']);
+          }
+        }
+      }
+    }
+    for(const [x,m] of hits) addMatch(x,m,p);
+  }
+  return {matches, productCount:prods.size};
+}
+let lastStockFileName='';
+$('invInput').addEventListener('change',()=>{ const f=$('invInput').files[0]; if(f) lastStockFileName=f.name; });
+$('updateStockBtn').addEventListener('click', async ()=>{
+  if(!invRows.length){ $('stockOut').innerHTML='<div class="banner warn">Upload an inventory CSV first.</div>'; return; }
+  if(window.__CLOUD && !canFile()){ $('stockOut').innerHTML='<div class="banner warn">Your role cannot update stock status — ask a filer or admin.</div>'; return; }
+  const {matches, productCount}=computeStockMatches();
+  const mDate=(lastStockFileName.match(/20\d{6}/)||[])[0];
+  const snapshot=mDate? (mDate.slice(0,4)+'-'+mDate.slice(4,6)+'-'+mDate.slice(6,8)) : todayISO();
+  const byMethod={}; matches.forEach(m=>{ byMethod[m.method]=(byMethod[m.method]||0)+1; });
+  const rows=[...matches.values()].sort((a,b)=>a.entry.productName.localeCompare(b.entry.productName));
+  $('stockOut').innerHTML='<div class="banner info"><b>Stock match preview</b> — '+matches.size+' COAs match '+productCount+' distinct in-stock products (barcode: '+(byMethod.barcode||0)+', batch: '+(byMethod.batch||0)+', name: '+(byMethod.name||0)+', blend component: '+(byMethod.component||0)+'). Snapshot date: '+esc(snapshot)+'.</div>'
+    +(rows.length?'<div style="max-height:300px;overflow:auto"><table><thead><tr><th>COA</th><th>Matched product in stock</th><th>How</th><th>Locations</th></tr></thead><tbody>'+rows.map(m=>'<tr><td>'+esc(m.entry.productName)+'</td><td>'+esc(m.product)+'</td><td>'+esc(m.method)+'</td><td>'+esc([...m.locations].join(', '))+'</td></tr>').join('')+'</tbody></table></div>':'');
+  const ok=await confirmDialog({title:'Update stock status',confirmLabel:'Apply stock status',body:'Mark '+matches.size+' COAs as Currently in stock (snapshot '+snapshot+') and clear the in-stock mark from every other COA?\n\nThis only changes the stock badge/filter — it does not change any COA\u2019s stores, details, or publish status. Name and blend-component matches are product-line matches; barcode and batch matches are exact.'});
+  if(!ok){ $('stockOut').innerHTML+='<div class="banner warn">Stock status NOT updated — preview only.</div>'; return; }
+  try{
+    if(window.__CLOUD){
+      const updates=[];
+      for(const e of catalog){
+        const m=matches.get(e.id);
+        const data=m? {inStock:true, stockLocations:[...m.locations], stockMatch:m.method, stockSnapshot:snapshot, updatedBy:currentUser.email}
+                     : {inStock:false, stockLocations:[], stockMatch:'', stockSnapshot:snapshot, updatedBy:currentUser.email};
+        if(e.inStock!==data.inStock || (e.stockSnapshot||'')!==snapshot || JSON.stringify(e.stockLocations||[])!==JSON.stringify(data.stockLocations)) updates.push([e.id,data]);
+      }
+      for(let i=0;i<updates.length;i+=500){ const batch=fbDb.batch(); updates.slice(i,i+500).forEach(([id,data])=>batch.update(fbDb.collection('coas').doc(id),data)); await batch.commit(); }
+      showMsg('✅ Stock status updated: '+matches.size+' COAs marked Currently in stock (snapshot '+snapshot+').','info');
+    } else {
+      for(const e of catalog){ const m=matches.get(e.id); if(m){ e.inStock=true; e.stockLocations=[...m.locations]; e.stockMatch=m.method; } else { e.inStock=false; e.stockLocations=[]; e.stockMatch=''; } e.stockSnapshot=snapshot; }
+      saveCatalog();
+      showMsg('✅ Stock status updated locally: '+matches.size+' COAs marked Currently in stock (snapshot '+snapshot+').','info');
+    }
+  }catch(err){ showMsg('Stock update failed: '+esc(err.message),'err'); }
 });
 
 // ---------- Export / import ----------

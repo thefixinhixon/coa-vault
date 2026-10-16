@@ -11,6 +11,15 @@
 
 Filters help if there are many results: narrow by Store, Type, or Status.
 
+**Currently in stock:** tick the **Currently in stock** checkbox to show only
+COAs whose product is in stock at one or more stores right now. Matched COAs
+carry a green **IN STOCK** badge with the locations and how they matched
+(barcode, batch, name, or blend component). Stock status comes from the most
+recent inventory snapshot a manager loaded (see below) — the date is shown
+next to the checkbox. A name or blend-component match means the COA covers
+that product line; only a barcode or batch match ties the COA to the exact
+tested lot, so still check the batch on the PDF against the package in hand.
+
 ## Filing a new COA (when product is received)
 
 1. Save the vendor/lab COA PDF to the computer (email, download, scan).
@@ -61,6 +70,13 @@ day-to-day filing, stick to verifying and publishing each COA on its own.
 - The barcode field is worth filling in — it's the fastest lookup at the counter.
 - The Missing-COA check (section 4) is a manager task: run it after a
   delivery against a fresh NMS2S inventory export.
+- **Updating stock status** (filers/admins, section 4): load a fresh NMS2S
+  Current Inventory CSV, click **Update stock status…**, and read the preview
+  table — it lists every COA that will be marked in stock, the product it
+  matched, and how. Only click **Apply stock status** if the preview looks
+  right; applying also clears the in-stock mark from COAs whose products are
+  no longer in stock. This powers the **Currently in stock** filter for
+  everyone. Run it whenever a new inventory export is available.
 
 ## Managing users (admins)
 
